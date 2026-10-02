@@ -3,27 +3,28 @@ from __future__ import annotations
 import csv
 import io
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, field_validator
 
 from app import __version__
-from app.config import get_settings
+from app.config import EDITABLE_SETTING_KEYS, EditableScannerParameters, get_settings
+from app.database import utc_iso
 from app.logging_config import configure_logging
 from app.models import FeeQuote, FeeStatus, OrderBook
 from app.runtime import ScannerRuntime
 from app.services.book_analytics import analyze_book
 from app.services.depth_calculator import calculate_depth
-from app.services.market_discovery import normalize_market
+from app.services.market_discovery import normalize_market, parse_bool, parse_list
 from app.services.quote_freshness import UNKNOWN_QUOTE_AGE, oldest_quote_age, quote_age_seconds
 from app.services.translation import DeepSeekTranslator, TranslationService, deepseek_key
 
@@ -38,15 +39,19 @@ templates = Jinja2Templates(directory="app/templates")
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     runtime = ScannerRuntime(settings)
     application.state.runtime = runtime
-    await runtime.start()
-    translations = TranslationService(Path("data/translations.sqlite3"), DeepSeekTranslator(deepseek_key()))
-    application.state.translations = translations
-    await translations.start()
+    translations: TranslationService | None = None
     try:
+        await runtime.start()
+        translations = TranslationService(Path("data/translations.sqlite3"), DeepSeekTranslator(deepseek_key()))
+        application.state.translations = translations
+        await translations.start()
         yield
     finally:
-        await translations.close()
-        await runtime.stop()
+        try:
+            if translations is not None:
+                await translations.close()
+        finally:
+            await runtime.stop()
 
 
 app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)
@@ -68,12 +73,8 @@ class TranslationRequest(BaseModel):
         return values
 
 
-class SettingsUpdate(BaseModel):
-    minimum_net_profit: Decimal = Field(ge=0, le=1000)
-    minimum_net_roi: Decimal = Field(ge=0, le=1)
-    default_quantity: Decimal = Field(gt=0, le=100000)
-    slippage_rate: Decimal = Field(ge=0, le=0.25)
-    safety_rate: Decimal = Field(ge=0, le=0.25)
+class SettingsUpdate(EditableScannerParameters):
+    pass
 
 
 def runtime(request: Request) -> ScannerRuntime:
@@ -101,13 +102,17 @@ async def translate_public_text(body: TranslationRequest, request: Request) -> d
 
 
 @app.get("/health")
-def health(request: Request) -> dict[str, Any]:
+def health(request: Request) -> JSONResponse:
     rt = runtime(request)
-    return {"status": "ok" if rt.database.health() else "degraded", "version": __version__, "mode": "public-read-only"}
+    healthy = rt.database.health()
+    return JSONResponse(
+        {"status": "ok" if healthy else "degraded", "version": __version__, "mode": "public-read-only"},
+        status_code=200 if healthy else 503,
+    )
 
 
 @app.get("/api/system/status")
-def system_status(request: Request) -> dict[str, Any]:
+async def system_status(request: Request) -> dict[str, Any]:
     rt = runtime(request)
     status = rt.status.model_dump(mode="json")
     status["websocket_status"] = "已连接" if rt.websocket.connected else "未连接"
@@ -116,14 +121,17 @@ def system_status(request: Request) -> dict[str, Any]:
     status.update({"database": "正常" if rt.database.health() else "异常", "version": __version__, "read_only": True})
     status["public_http"] = rt.http.metrics()
     status["scanner_selection"] = dict(rt.catalog.snapshot.scanner_selection)
+    status["opportunity_count"] = sum(
+        rt.valid_opportunity(rt.markets[mid], result) for mid, result in rt.results.items() if mid in rt.markets
+    )
     return status
 
 
 @app.get("/api/dashboard")
-def dashboard_api(request: Request) -> dict[str, Any]:
+async def dashboard_api(request: Request) -> dict[str, Any]:
     rt = runtime(request)
     return {
-        "status": rt.status.model_dump(mode="json"),
+        "status": await system_status(request),
         "paper_trade_count": rt.database.paper_trade_count(),
         "estimated_paper_profit": str(rt.database.paper_profit_total()),
         "read_only": True,
@@ -131,7 +139,9 @@ def dashboard_api(request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/markets")
-def markets_api(request: Request, limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)) -> dict[str, Any]:
+async def markets_api(
+    request: Request, limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)
+) -> dict[str, Any]:
     rt = runtime(request)
     items = list(rt.markets.values())
     return register_translation_text(
@@ -140,7 +150,7 @@ def markets_api(request: Request, limit: int = Query(50, ge=1, le=200), offset: 
 
 
 @app.get("/api/markets/{market_id}")
-def market_api(market_id: str, request: Request) -> dict[str, Any]:
+async def market_api(market_id: str, request: Request) -> dict[str, Any]:
     rt = runtime(request)
     market = rt.markets.get(market_id)
     if market is None:
@@ -153,11 +163,19 @@ def market_api(market_id: str, request: Request) -> dict[str, Any]:
     payload["book_analytics"] = [
         book_analysis(book, Decimal(rt.settings.max_quote_age_seconds)) for book in (yes_book, no_book)
     ]
+    payload["calculation_orderbooks"] = [
+        rt.calculation_books[token].model_dump(mode="json") if token in rt.calculation_books else None
+        for token in (market.yes_token_id, market.no_token_id)
+    ]
+    payload["calculation_as_of"] = (
+        rt.status.last_orderbook_refresh.isoformat() if rt.status.last_orderbook_refresh else None
+    )
+    payload["display_orderbooks_source"] = "公开 REST / Market WebSocket 展示快照"
     return register_translation_text(request, payload)
 
 
 @app.get("/api/opportunities")
-def opportunities_api(request: Request) -> dict[str, Any]:
+async def opportunities_api(request: Request) -> dict[str, Any]:
     rt = runtime(request)
     items = []
     for market_id, result in rt.results.items():
@@ -177,16 +195,13 @@ def opportunities_history(
 
 
 @app.post("/api/paper-trades")
-def create_paper_trade(body: PaperTradeRequest, request: Request) -> dict[str, Any]:
+async def create_paper_trade(body: PaperTradeRequest, request: Request) -> dict[str, Any]:
     rt = runtime(request)
-    market = rt.markets.get(body.market_id)
-    result = rt.results.get(body.market_id)
-    if market is None or result is None:
-        raise HTTPException(409, "没有可追溯的实时订单簿计算结果")
-    if not rt.valid_opportunity(market, result):
-        raise HTTPException(409, "当前快照过期或未通过全部机会门槛; 请刷新盘口")
-    trade_id = rt.database.add_paper_trade(market, result)
-    return {"id": trade_id, "status": "SUCCESS" if result.status == "VALID" else "FAILED", "simulation_only": True}
+    try:
+        trade_id = await rt.create_paper_trade(body.market_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+    return {"id": trade_id, "status": "SUCCESS", "simulation_only": True}
 
 
 @app.get("/api/paper-trades")
@@ -198,26 +213,32 @@ def paper_trades_api(
     )
 
 
+@app.get("/api/paper-trades/{trade_id}")
+def paper_trade_details(trade_id: int, request: Request) -> dict[str, Any]:
+    payload = runtime(request).database.get_paper_trade_details(trade_id)
+    if payload is None:
+        raise HTTPException(404, "模拟记录不存在")
+    return register_translation_text(request, payload)
+
+
+@app.get("/api/opportunities/history/{opportunity_id}")
+def opportunity_details(opportunity_id: int, request: Request) -> dict[str, Any]:
+    payload = runtime(request).database.get_opportunity_details(opportunity_id)
+    if payload is None:
+        raise HTTPException(404, "历史信号不存在")
+    return register_translation_text(request, payload)
+
+
 @app.get("/api/settings")
 def get_application_settings(request: Request) -> dict[str, str]:
     rt = runtime(request)
-    stored = rt.database.settings()
-    return {
-        "minimum_net_profit": stored.get("minimum_net_profit", settings.minimum_net_profit),
-        "minimum_net_roi": stored.get("minimum_net_roi", settings.minimum_net_roi),
-        "default_quantity": stored.get("default_quantity", settings.default_quantity),
-        "slippage_rate": stored.get("slippage_rate", settings.slippage_rate),
-        "safety_rate": stored.get("safety_rate", settings.safety_rate),
-    }
+    return {key: str(getattr(rt.settings, key)) for key in EDITABLE_SETTING_KEYS}
 
 
 @app.put("/api/settings")
-def update_application_settings(body: SettingsUpdate, request: Request) -> dict[str, str]:
+async def update_application_settings(body: SettingsUpdate, request: Request) -> dict[str, str]:
     rt = runtime(request)
-    for key, value in body.model_dump().items():
-        text = str(value)
-        rt.database.upsert_setting(key, text)
-        setattr(settings, key, text)
+    await rt.apply_parameters({key: str(value) for key, value in body.model_dump().items()})
     return get_application_settings(request)
 
 
@@ -228,7 +249,7 @@ def logs_api(request: Request, limit: int = Query(100, ge=1, le=500)) -> dict[st
         "items": [
             {
                 "id": row.id,
-                "created_at": row.created_at.isoformat(),
+                "created_at": utc_iso(row.created_at),
                 "level": row.level,
                 "source": row.source,
                 "event": row.event,
@@ -239,30 +260,89 @@ def logs_api(request: Request, limit: int = Query(100, ge=1, le=500)) -> dict[st
     }
 
 
-def _csv_response(rows: list[dict[str, Any]], filename: str) -> StreamingResponse:
-    stream = io.StringIO()
-    if rows:
-        writer = csv.DictWriter(stream, fieldnames=list(rows[0].keys()), extrasaction="ignore")
+CSV_NUMERIC_FIELDS = {
+    "id",
+    "target_quantity",
+    "executable_quantity",
+    "total_cost",
+    "net_profit",
+    "net_roi",
+    "max_net_profit",
+    "max_net_roi",
+    "max_quantity",
+}
+PAPER_CSV_FIELDS = [
+    "id",
+    "created_at",
+    "market_id",
+    "market_question",
+    "target_quantity",
+    "executable_quantity",
+    "total_cost",
+    "net_profit",
+    "net_roi",
+    "status",
+    "failure_reason",
+    "trigger_type",
+    "data_source",
+]
+OPPORTUNITY_CSV_FIELDS = [
+    "id",
+    "market_id",
+    "question",
+    "first_seen",
+    "last_seen",
+    "status",
+    "max_net_profit",
+    "max_net_roi",
+    "max_quantity",
+    "disappeared_reason",
+]
+
+
+def _csv_response(rows: Iterable[dict[str, Any]], filename: str, fields: list[str]) -> StreamingResponse:
+    def chunks() -> Iterator[bytes]:
+        stream = io.StringIO()
+        writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
+        stream.write("\ufeff")
         writer.writeheader()
-        writer.writerows(rows)
-    else:
-        stream.write("status\r\n暂无数据\r\n")
-    data = ("\ufeff" + stream.getvalue()).encode("utf-8")
+        yield stream.getvalue().encode("utf-8")
+        stream.seek(0)
+        stream.truncate(0)
+        try:
+            for count, row in enumerate(rows, 1):
+                safe = dict(row)
+                for key, value in safe.items():
+                    if (
+                        key not in CSV_NUMERIC_FIELDS
+                        and isinstance(value, str)
+                        and value.lstrip().startswith(("=", "+", "-", "@"))
+                    ):
+                        safe[key] = "'" + value
+                writer.writerow(safe)
+                if count % 500 == 0:
+                    yield stream.getvalue().encode("utf-8")
+                    stream.seek(0)
+                    stream.truncate(0)
+            if stream.tell():
+                yield stream.getvalue().encode("utf-8")
+        finally:
+            if hasattr(rows, "close"):
+                rows.close()
+
     return StreamingResponse(
-        iter([data]), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        chunks(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
 
 @app.get("/api/exports/opportunities.csv")
 def export_opportunities(request: Request) -> StreamingResponse:
-    rows = runtime(request).database.list_opportunities(5000)
-    flat = [{key: value for key, value in row.items() if key != "details"} for row in rows]
-    return _csv_response(flat, "opportunities.csv")
+    return _csv_response(runtime(request).database.iter_opportunities(), "opportunities.csv", OPPORTUNITY_CSV_FIELDS)
 
 
 @app.get("/api/exports/paper-trades.csv")
 def export_paper_trades(request: Request) -> StreamingResponse:
-    return _csv_response(runtime(request).database.list_paper_trades(5000), "paper-trades.csv")
+    return _csv_response(runtime(request).database.iter_paper_trades(), "paper-trades.csv", PAPER_CSV_FIELDS)
 
 
 @app.get("/monitor", response_class=HTMLResponse)
@@ -313,14 +393,14 @@ def research_data() -> dict[str, Any]:
 
 
 @app.get("/api/catalog")
-def catalog_api(
+async def catalog_api(
     request: Request,
-    category: str = "all",
-    search: str = "",
-    sort: str = "volume24h",
+    category: Literal["all", "sports", "weather", "crypto", "economy", "politics", "other"] = "all",
+    search: str = Query("", max_length=500),
+    sort: Literal["volume24h", "liquidity", "newest", "ending"] = "volume24h",
     limit: int = Query(40, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    min_liquidity: float = Query(0, ge=0),
+    min_liquidity: float = Query(0, ge=0, allow_inf_nan=False),
 ) -> dict[str, Any]:
     rt = runtime(request)
     snapshot = rt.catalog.snapshot
@@ -371,6 +451,47 @@ async def inspect_market(
         raise HTTPException(404, "市场尚未进入目录")
     result = dict(item)
     try:
+        # Catalog browsing tolerates older metadata; a cost decision needs the
+        # current trading state and the exact original outcome/token mapping.
+        latest_rows = await rt.gamma.fetch_markets_by_ids([market_id])
+        observed_at = datetime.now(UTC)
+        result["metadataAsOf"] = observed_at.isoformat()
+        current = latest_rows[0] if latest_rows else None
+        reason = ""
+        if current is None:
+            reason = "最新公开接口未返回该开盘市场; 可能已关闭, 暂停成本核验"
+        elif (
+            not parse_bool(current.get("active"))
+            or parse_bool(current.get("closed"), default=True)
+            or not parse_bool(current.get("acceptingOrders", current.get("accepting_orders")))
+            or not parse_bool(current.get("enableOrderBook", current.get("enable_order_book")))
+        ):
+            reason = "市场已关闭或停止接受交易, 暂停成本核验"
+        elif (
+            parse_list(current.get("clobTokenIds", current.get("clob_token_ids"))) != item["tokens"]
+            or parse_list(current.get("outcomes")) != item["outcomes"]
+            or not isinstance(current.get("conditionId", current.get("condition_id")), str)
+            or current.get("conditionId", current.get("condition_id"))
+            != raw.get("conditionId", raw.get("condition_id"))
+        ):
+            reason = "市场标识或结果与 Token 映射已变化, 等待目录更新后核验"
+        if reason:
+            result.update(
+                available=False,
+                unavailableReason=reason,
+                books=[None for _ in item["tokens"]],
+                book_analytics=[None for _ in item["tokens"]],
+                calculation=None,
+                asOf=observed_at.isoformat(),
+            )
+            return register_translation_text(request, result)
+        assert current is not None
+        raw = current
+        result.update(
+            available=True,
+            question=current.get("question", item["question"]),
+            description=current.get("description", item.get("description", "")),
+        )
         books = await rt.clob.fetch_books(item["tokens"])
         observed_at = datetime.now(UTC)
         as_of = observed_at.isoformat()
@@ -385,7 +506,13 @@ async def inspect_market(
                 "calculation": None,
             }
         )
-        if len(item["tokens"]) == 2 and all(t in books for t in item["tokens"]):
+        if (
+            len(item["tokens"]) == 2
+            and len(set(item["tokens"])) == 2
+            and len(item["outcomes"]) == 2
+            and len(set(item["outcomes"])) == 2
+            and all(t in books for t in item["tokens"])
+        ):
             # The two labels can be teams or Up/Down. Preserve label-token order for display.
             copy = dict(raw)
             copy["outcomes"] = ["Yes", "No"]
@@ -404,17 +531,27 @@ async def inspect_market(
                 slippage_rate=Decimal(rt.settings.slippage_rate),
                 safety_rate=Decimal(rt.settings.safety_rate),
                 extra_cost=extra_cost,
+                expected_condition_id=market.condition_id,
             )
             relevant_books = [books[token] for token in item["tokens"]]
-            minimum = max(book.min_order_size or Decimal("0") for book in relevant_books)
+            minimum = (
+                max(book.min_order_size for book in relevant_books if book.min_order_size is not None)
+                if all(book.min_order_size is not None for book in relevant_books)
+                else None
+            )
             age = oldest_quote_age((book.timestamp for book in relevant_books), now=observed_at)
             calc.quote_age = age if age is not None else UNKNOWN_QUOTE_AGE
-            if age is None or calc.quote_age > Decimal(rt.settings.max_quote_age_seconds):
+            if calc.status in {"VALID", "PARTIAL", "FEE_UNKNOWN"} and (
+                age is None or calc.quote_age > Decimal(rt.settings.max_quote_age_seconds)
+            ):
                 calc.status = "STALE"
-            elif calc.executable_quantity < minimum:
-                calc.status = "BELOW_MIN_ORDER"
+            elif calc.status in {"VALID", "PARTIAL"}:
+                if minimum is None:
+                    calc.status = "MIN_ORDER_UNKNOWN"
+                elif calc.executable_quantity < minimum:
+                    calc.status = "BELOW_MIN_ORDER"
             result["calculation"] = calc.model_dump(mode="json")
-            result["minimumOrderSize"] = str(minimum)
+            result["minimumOrderSize"] = str(minimum) if minimum is not None else None
         return register_translation_text(request, result)
     except Exception as exc:
         raise HTTPException(502, "公开盘口暂时无法读取; 请稍后重试") from exc

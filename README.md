@@ -29,21 +29,23 @@ On Linux, or for manual setup:
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-lock.txt
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m app
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Initial discovery runs in the background. Windows scripts (`install.bat`, `run.bat`) and `docker compose up --build` are also included.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Startup loads an initial sample and books before readiness; full catalog discovery then continues in the background. `python -m app` honors validated `PMS_HOST` / `PMS_PORT`. Windows scripts (`install.bat`, `run.bat`) and `docker compose up --build` are also included; those environments were not run during the current macOS audit.
 
 ## Data scope
 
 - Gamma `/events/keyset` supplies popular, new, and category samples, followed by at most 100 pages of 100 events per pass. Discovery repeats approximately ten minutes after each pass. The UI reports coverage and failures; the cap does not establish a complete global inventory.
 - Categories cover sports, weather, crypto, economy/finance, politics, and other markets. Labels, volume, and liquidity help research screening; they are not profit signals.
-- The scanner applies liquidity/total-volume thresholds, then reserves places across eligible categories before filling by activity (`PMS_MAX_MARKETS`). CLOB `/books` refreshes every five seconds by default. The public Market WebSocket subscribes to selected tokens, but calculations use REST snapshots.
+- The scanner applies liquidity/total-volume thresholds, then reserves places across eligible categories before filling by activity (`PMS_MAX_MARKETS`). Selected markets are rechecked against current Gamma trading state and token mappings. CLOB `/books` refreshes every five seconds by default. The public Market WebSocket subscribes to selected tokens, but calculations retain separate REST snapshots.
 - Detail views include Decimal spread, near-price depth, best-level imbalance, and microprice for each real outcome. Invalid or stale books are labelled. The monitor exposes public-request, retry, and rate-limit counters.
 - Details preserve outcome/token ordering, including team-name and Up/Down binary outcomes. `Decimal` calculations check depth, fees, quote freshness, minimum size, and buffers. Unknown or unsupported fees cannot produce valid opportunities.
-- Paper records, history, and CSV exports are local. Strategy pages describe research candidates; external weather feeds, sports odds, calibrated prediction models, and real trading are not implemented.
+- Paper records and signal history are local; detail APIs expose saved REST inputs and parameters. CSV exports stream all saved records. Editable parameters persist across restarts, and obsolete signals are marked disappeared. Strategy pages describe research candidates; external weather feeds, sports odds, calibrated prediction models, and real trading are not implemented.
 
 The [open-source review](docs/OPEN_SOURCE_REVIEW.md) records the 2026-10-03 high-star shortlist, pinned source evidence, compatibility/license findings, and independent improvements. The reference page can filter archived projects and shows adoption decisions.
+
+The [functional audit](docs/FUNCTIONAL_AUDIT.md) documents every page/API, data lifecycle, candidate gates, confirmed fixes, validation results, and remaining limits. See also the [API reference](docs/API_REFERENCE.md) and [architecture](docs/ARCHITECTURE.md).
 
 ## Optional Chinese translation
 

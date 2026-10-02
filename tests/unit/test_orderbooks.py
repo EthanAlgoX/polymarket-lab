@@ -46,3 +46,18 @@ def test_optional_metadata() -> None:
     book = normalize_orderbook({"asset_id": "t", "tick_size": "0.001", "last_trade_price": "0.33"})
     assert book.tick_size == Decimal("0.001")
     assert book.last_trade_price == Decimal("0.33")
+
+
+def test_invalid_metadata_is_discarded_and_null_asset_is_not_stringified() -> None:
+    book = normalize_orderbook(
+        {"asset_id": None, "tick_size": "-0.001", "min_order_size": "-1", "last_trade_price": "1.01"}
+    )
+    assert book.asset_id == ""
+    assert book.tick_size is book.min_order_size is book.last_trade_price is None
+
+
+def test_unrepresentable_depth_does_not_crash_book_normalization() -> None:
+    book = normalize_orderbook(
+        {"asset_id": "x", "asks": [{"price": "0.4", "size": "1e1000000"}, {"price": "0.5", "size": "2"}]}
+    )
+    assert [(level.price, level.size) for level in book.asks] == [(Decimal("0.5"), Decimal("2"))]

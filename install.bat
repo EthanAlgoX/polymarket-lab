@@ -1,5 +1,6 @@
 @echo off
 setlocal
+cd /d "%~dp0" || exit /b 1
 where python >nul 2>nul || (echo [ERROR] Python 3.11+ not found & exit /b 1)
 python -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" || (echo [ERROR] Python 3.11+ required & exit /b 1)
 if not exist .venv python -m venv .venv || exit /b 1

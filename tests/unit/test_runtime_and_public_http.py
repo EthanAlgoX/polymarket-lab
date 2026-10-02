@@ -96,6 +96,7 @@ async def test_runtime_offline_lifecycle_and_payload(tmp_path: Path, monkeypatch
 async def test_runtime_websocket_book_message(tmp_path: Path) -> None:
     settings = Settings(enable_live_scanner=False, database_url=f"sqlite:///{tmp_path / 'runtime-ws.db'}")
     runtime = ScannerRuntime(settings)
+    runtime.websocket.set_tokens({"token"})
     await runtime.handle_websocket(
         {
             "event_type": "book",

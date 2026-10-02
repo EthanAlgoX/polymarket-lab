@@ -1,5 +1,6 @@
 @echo off
 setlocal
+cd /d "%~dp0" || exit /b 1
 echo WARNING: This removes data\scanner.db only. Exports and source code are preserved.
 set /p confirm=Type RESET to continue:
 if /I not "%confirm%"=="RESET" (echo Cancelled. & exit /b 1)

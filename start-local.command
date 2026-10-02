@@ -26,4 +26,4 @@ if [[ ! -x "$PM_RUNTIME" ]]; then
   fi
   "$PM_RUNTIME" -m pip install -r "$PM_REQUIREMENTS"
 fi
-exec "$PM_RUNTIME" -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+exec "$PM_RUNTIME" -m app

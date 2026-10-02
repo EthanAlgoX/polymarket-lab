@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class FeeStatus(StrEnum):
@@ -14,8 +14,8 @@ class FeeStatus(StrEnum):
 
 class PriceLevel(BaseModel):
     model_config = ConfigDict(frozen=True)
-    price: Decimal
-    size: Decimal
+    price: Decimal = Field(ge=0, le=1, allow_inf_nan=False)
+    size: Decimal = Field(gt=0, allow_inf_nan=False)
 
 
 class OrderBook(BaseModel):
@@ -24,9 +24,9 @@ class OrderBook(BaseModel):
     timestamp: str = ""
     bids: list[PriceLevel] = Field(default_factory=list)
     asks: list[PriceLevel] = Field(default_factory=list)
-    tick_size: Decimal | None = None
-    min_order_size: Decimal | None = None
-    last_trade_price: Decimal | None = None
+    tick_size: Decimal | None = Field(default=None, gt=0, le=1, allow_inf_nan=False)
+    min_order_size: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
+    last_trade_price: Decimal | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     book_hash: str = ""
 
     @property
@@ -56,17 +56,40 @@ class Market(BaseModel):
     token_ids: list[str]
     yes_token_id: str
     no_token_id: str
-    liquidity: Decimal = Decimal("0")
-    volume: Decimal = Decimal("0")
+    liquidity: Decimal = Field(default=Decimal("0"), ge=0, allow_inf_nan=False)
+    volume: Decimal = Field(default=Decimal("0"), ge=0, allow_inf_nan=False)
     fees_enabled: bool | None = None
-    fee_rate: Decimal | None = None
+    fee_rate: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
     raw: dict[str, object] = Field(default_factory=dict, exclude=True)
+
+    @model_validator(mode="after")
+    def validate_binary_tokens(self) -> Market:
+        labels = [label.strip().casefold() for label in self.outcomes]
+        if len(labels) != 2 or set(labels) != {"yes", "no"} or len(self.token_ids) != 2:
+            raise ValueError("a scanner market requires exactly two Yes/No outcomes and tokens")
+        if any(not token.strip() for token in self.token_ids) or len(set(self.token_ids)) != 2:
+            raise ValueError("outcome tokens must be distinct and nonempty")
+        if (
+            self.yes_token_id != self.token_ids[labels.index("yes")]
+            or self.no_token_id != self.token_ids[labels.index("no")]
+        ):
+            raise ValueError("Yes/No token mapping must preserve the original outcome order")
+        if not self.market_id.strip() or not self.condition_id.strip():
+            raise ValueError("market and condition identifiers must be nonempty")
+        return self
 
 
 class FeeQuote(BaseModel):
     status: FeeStatus
-    base_fee_bps: Decimal | None = None
+    base_fee_bps: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
     reason: str | None = None
+
+    @model_validator(mode="after")
+    def require_rate_for_known_fee(self) -> FeeQuote:
+        if self.status is FeeStatus.KNOWN and self.base_fee_bps is None:
+            self.status = FeeStatus.UNKNOWN
+            self.reason = self.reason or "fee rate absent"
+        return self
 
 
 class DepthResult(BaseModel):

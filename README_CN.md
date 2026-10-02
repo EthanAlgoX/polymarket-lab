@@ -29,21 +29,23 @@ Linux 或手动启动：
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-lock.txt
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m app
 ```
 
-打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。首次发现市场在后台运行，需要一些时间。也提供 Windows 的 `install.bat` / `run.bat` 和 `docker compose up --build`。
+打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。启动先加载初始市场样本和盘口，完整目录随后在后台遍历。`python -m app` 使用校验后的 `PMS_HOST` / `PMS_PORT`。也提供 Windows 的 `install.bat` / `run.bat` 和 `docker compose up --build`；本次 macOS 审计没有实机运行这两个环境。
 
 ## 数据与研究范围
 
 - 目录读取 Gamma `/events/keyset`，先提供热门、最新和分类样本，再遍历最多 100 页、每页最多 100 个事件；每轮完成后约十分钟重新发现。页面显示覆盖状态和失败，达到上限不意味着完整收录全站。
 - 分类包括体育、天气、加密、经济/金融、政治和其他，依据事件标签归类。标签、成交量和流动性用于筛选，不等于盈利信号。
-- 扫描器先应用流动性/总成交量门槛，再为各符合条件的行业分配名额，余量按活跃度补齐，总数由 `PMS_MAX_MARKETS` 配置。CLOB `/books` 默认五秒刷新一次；公开 Market WebSocket 订阅选定 token，净差计算仍使用 REST 快照。
+- 扫描器先应用流动性/总成交量门槛，再为各符合条件的行业分配名额，余量按活跃度补齐，总数由 `PMS_MAX_MARKETS` 配置。选样会再次核验 Gamma 当前开盘状态与 token 映射。CLOB `/books` 默认五秒刷新一次；公开 Market WebSocket 订阅选定 token，净差计算保留独立 REST 快照。
 - 详情对每个真实结果分别展示 Decimal 价差、近价深度、首档失衡和首档加权价，并标明无效或过期盘口；运行监控展示公共请求、重试和限流计数。
 - 详情保留结果/token对应顺序，也支持队名、Up/Down 等二元结果。金融计算使用 `Decimal`，检查深度、手续费、报价时间、最小成交量和费用缓冲；费用未知或不支持时不认定有效机会。
-- 模拟记录、历史和 CSV 导出保存在本地。交易空间页提供候选研究方向；外部天气观测、体育赔率、经过校准的预测模型和真实交易尚未实现。
+- 模拟和信号历史保存在本地，详情 API 可查看当时保存的 REST 输入和参数；CSV 流式导出全部记录。可编辑参数重启恢复，旧信号会标记失效。交易空间页提供候选研究方向；外部天气观测、体育赔率、经过校准的预测模型和真实交易尚未实现。
 
 [开源项目评审](docs/OPEN_SOURCE_REVIEW.md) 记录 2026-10-03 的高星筛选、固定提交源码证据、兼容性/许可证判断及本轮独立实现的优化。开源参考页支持排除归档项目，并显示逐项采用决定。
+
+[功能逻辑与修复审计](docs/FUNCTIONAL_AUDIT.md) 覆盖全部页面/API、数据生命周期、候选门槛、已确认修复、验证结果与实际限制；接口与模块说明分别见 [API_REFERENCE.md](docs/API_REFERENCE.md) 和 [ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 可选中文翻译
 

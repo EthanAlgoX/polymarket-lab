@@ -41,7 +41,7 @@ async def test_gamma_keyset_pagination() -> None:
 
 @pytest.mark.asyncio
 async def test_clob_books_and_fee_states() -> None:
-    http = StubHTTP([[{"asset_id": "t", "asks": [{"price": "0.5", "size": "2"}]}], {"fd": {"r": "0.03"}}])
+    http = StubHTTP([[{"asset_id": "t", "asks": [{"price": "0.5", "size": "2"}]}], {"fd": {"r": "0.03", "e": 1}}])
     client = ClobClient(http, "https://example.test")  # type: ignore[arg-type]
     books = await client.fetch_books(["t"])
     assert books["t"].best_ask == Decimal("0.5")
@@ -291,3 +291,113 @@ async def test_public_http_concurrent_callers_share_cooldown_without_blocking_an
         if second is not None:
             second.cancel()
         await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "flags", [{"has_more": False, "next_cursor": "unused"}, {"limit_reached": True, "next_cursor": "unused"}]
+)
+async def test_gamma_terminal_flags_prevent_extra_requests(flags: dict[str, object]) -> None:
+    http = StubHTTP([{"markets": [{"id": "1"}], **flags}])
+    client = GammaClient(http, "https://example.test")  # type: ignore[arg-type]
+    assert await client.fetch_markets(100) == [{"id": "1"}]
+    assert http.calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"markets": [{"id": "1"}], "has_more": "false"},
+        {"markets": [{"id": "1"}], "has_more": True},
+        {"markets": [{"id": "1"}], "next_cursor": 1},
+        {"markets": [], "next_cursor": "more"},
+        {"markets": [None]},
+    ],
+)
+async def test_gamma_invalid_pagination_does_not_claim_valid_sample(payload: dict[str, object]) -> None:
+    client = GammaClient(StubHTTP([payload]), "https://example.test")  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        await client.fetch_markets(100)
+
+
+@pytest.mark.asyncio
+async def test_gamma_repeated_cursor_fails_without_filling_budget_with_duplicate_pages() -> None:
+    http = StubHTTP(
+        [
+            {"markets": [{"id": "1"}], "next_cursor": "repeat"},
+            {"markets": [{"id": "2"}], "next_cursor": "repeat"},
+        ]
+    )
+    client = GammaClient(http, "https://example.test")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="repeated market cursor"):
+        await client.fetch_markets(100)
+    assert http.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_clob_deduplicates_requests_and_ignores_unrequested_books() -> None:
+    class BooksHTTP:
+        body: object = None
+
+        async def request_json(self, method: str, url: str, **kwargs: object):
+            self.body = kwargs["json"]
+            return [{"asset_id": "a"}, {"asset_id": "foreign"}, {"asset_id": None}]
+
+    http = BooksHTTP()
+    client = ClobClient(http, "https://example.test")  # type: ignore[arg-type]
+    assert set(await client.fetch_books(["a", "a"])) == {"a"}
+    assert http.body == [{"token_id": "a"}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exponent", [None, 0, 2, "NaN", "sNaN", "Infinity"])
+async def test_clob_unknown_or_unsupported_fee_exponent_is_not_guessed(exponent: object) -> None:
+    client = ClobClient(StubHTTP([{"fd": {"r": "0.03", "e": exponent}}]), "https://example.test")  # type: ignore[arg-type]
+    quote = await client.fetch_fee("condition", True)
+    assert quote.status == FeeStatus.UNKNOWN
+    assert quote.base_fee_bps is None
+
+
+@pytest.mark.asyncio
+async def test_clob_fee_uses_documented_market_info_endpoint() -> None:
+    class FeeHTTP:
+        url = ""
+
+        async def request_json(self, method: str, url: str, **kwargs: object):
+            self.url = url
+            return {"fd": {"r": "0.03", "e": 1}}
+
+    http = FeeHTTP()
+    quote = await ClobClient(http, "https://example.test").fetch_fee("condition/id", True)  # type: ignore[arg-type]
+    assert http.url == "https://example.test/clob-markets/condition%2Fid"
+    assert quote.status == FeeStatus.KNOWN
+
+
+@pytest.mark.asyncio
+async def test_gamma_market_id_batches_are_bounded_and_deduplicated() -> None:
+    class SelectedHTTP:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def request_json(self, method: str, url: str, **kwargs: object):
+            params = kwargs["params"]
+            self.calls.append(params)
+            return [{"id": market_id} for market_id in params["id"]]
+
+    http = SelectedHTTP()
+    client = GammaClient(http, "https://example.test")  # type: ignore[arg-type]
+    ids = [str(index) for index in range(101)]
+    assert len(await client.fetch_markets_by_ids([*ids, "0"])) == 101
+    assert [call["limit"] for call in http.calls] == [100, 1]
+    assert all(call["closed"] == "false" for call in http.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload", [[{"id": "foreign"}], [{"id": "a"}, {"id": "a"}], {"markets": [{"id": "a"}]}, [None]]
+)
+async def test_gamma_selected_market_schema_and_identity_fail_closed(payload: object) -> None:
+    client = GammaClient(StubHTTP([payload]), "https://example.test")  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        await client.fetch_markets_by_ids(["a"])

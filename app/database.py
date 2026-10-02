@@ -6,13 +6,31 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, create_engine, event, func, select
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    event,
+    func,
+    select,
+    update,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, defer, mapped_column, relationship, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 
 class Base(DeclarativeBase):
     pass
+
+
+def utc_iso(value: datetime) -> str:
+    # SQLite drops timezone metadata; all application writes use UTC.
+    return value.replace(tzinfo=UTC).isoformat() if value.tzinfo is None else value.astimezone(UTC).isoformat()
 
 
 class MarketRow(Base):
@@ -138,6 +156,7 @@ class Database:
 
     def initialize(self) -> None:
         Base.metadata.create_all(self.engine)
+        self.reconcile_opportunities(set(), "服务重启, 等待新盘口核验")
 
     def close(self) -> None:
         self.engine.dispose()
@@ -147,8 +166,11 @@ class Database:
             yield session
 
     def health(self) -> bool:
-        with self.Session() as session:
-            return session.scalar(select(func.count()).select_from(ApplicationSettingRow)) is not None
+        try:
+            with self.Session() as session:
+                return session.scalar(select(func.count()).select_from(ApplicationSettingRow)) is not None
+        except Exception:
+            return False
 
     def add_event(self, level: str, source: str, event_name: str, message: str, market_id: str | None = None) -> None:
         with self.Session.begin() as session:
@@ -157,13 +179,24 @@ class Database:
             )
 
     def upsert_setting(self, key: str, value: str) -> None:
+        self.upsert_settings({key: value})
+
+    def upsert_settings(self, values: dict[str, str]) -> None:
         with self.Session.begin() as session:
-            row = session.get(ApplicationSettingRow, key)
-            if row is None:
-                session.add(ApplicationSettingRow(key=key, value=value))
-            else:
-                row.value = value
-                row.updated_at = datetime.now(UTC)
+            for key, value in values.items():
+                row = session.get(ApplicationSettingRow, key)
+                if row is None:
+                    session.add(ApplicationSettingRow(key=key, value=value))
+                else:
+                    row.value = value
+                    row.updated_at = datetime.now(UTC)
+
+    def reconcile_opportunities(self, active_fingerprints: set[str], reason: str) -> None:
+        with self.Session.begin() as session:
+            statement = update(OpportunityRow).where(OpportunityRow.status == "active")
+            if active_fingerprints:
+                statement = statement.where(OpportunityRow.fingerprint.not_in(active_fingerprints))
+            session.execute(statement.values(status="disappeared", disappeared_reason=reason))
 
     def settings(self) -> dict[str, str]:
         with self.Session() as session:
@@ -180,7 +213,9 @@ class Database:
     def paper_profit_total(self) -> Decimal:
         with self.Session() as session:
             values = session.scalars(
-                select(PaperTradeRow.net_profit).where(PaperTradeRow.net_profit.is_not(None))
+                select(PaperTradeRow.net_profit).where(
+                    PaperTradeRow.net_profit.is_not(None), PaperTradeRow.status == "SUCCESS"
+                )
             ).all()
             return sum((Decimal(value) for value in values if value is not None), Decimal("0"))
 
@@ -196,6 +231,9 @@ class Database:
                 )
                 session.add(row)
             row.slug = market.slug
+            row.condition_id = market.condition_id
+            row.event_id = market.event_id
+            row.question = market.question
             row.category = market.category
             row.active = market.active
             row.closed = market.closed
@@ -203,19 +241,25 @@ class Database:
             row.liquidity = str(market.liquidity)
             row.volume = str(market.volume)
             row.updated_at = datetime.now(UTC)
-            existing = {token.outcome: token for token in row.tokens}
-            for index, (outcome, token_id) in enumerate(zip(market.outcomes, market.token_ids, strict=True)):
-                token = existing.get(outcome)
-                if token is None:
+            # Rebuild changed mappings only after removing old unique token IDs.
+            desired = list(zip(market.outcomes, market.token_ids, strict=True))
+            existing_mapping = [
+                (token.outcome, token.token_id) for token in sorted(row.tokens, key=lambda t: t.outcome_index)
+            ]
+            if desired != existing_mapping:
+                row.tokens.clear()
+                session.flush()
+                for index, (outcome, token_id) in enumerate(desired):
                     row.tokens.append(MarketTokenRow(outcome=outcome, outcome_index=index, token_id=token_id))
-                else:
-                    token.outcome_index = index
-                    token.token_id = token_id
 
-    def upsert_opportunity(self, market: Any, result: Any) -> None:
+    def upsert_opportunity(self, market: Any, result: Any, *, audit_context: dict[str, Any] | None = None) -> None:
         now = datetime.now(UTC)
         profit = str(result.net_profit or Decimal("0"))
         roi = str(result.net_roi or Decimal("0"))
+        payload = result.model_dump(mode="json")
+        if audit_context is not None:
+            payload["audit"] = audit_context
+        payload_json = json.dumps(payload, ensure_ascii=False, allow_nan=False)
         with self.Session.begin() as session:
             row = session.scalar(
                 select(OpportunityRow).where(OpportunityRow.fingerprint == result.snapshot_fingerprint)
@@ -231,19 +275,27 @@ class Database:
                         min_net_profit=profit,
                         max_net_roi=roi,
                         max_quantity=str(result.executable_quantity),
-                        payload_json=result.model_dump_json(),
+                        payload_json=payload_json,
                     )
                 )
             else:
                 row.last_seen = now
+                row.status = "active"
+                row.disappeared_reason = None
+                row.question = market.question
                 row.max_net_profit = str(max(Decimal(row.max_net_profit), Decimal(profit)))
                 row.min_net_profit = str(min(Decimal(row.min_net_profit), Decimal(profit)))
                 row.max_net_roi = str(max(Decimal(row.max_net_roi), Decimal(roi)))
                 row.max_quantity = str(max(Decimal(row.max_quantity), result.executable_quantity))
-                row.payload_json = result.model_dump_json()
+                row.payload_json = payload_json
 
-    def add_paper_trade(self, market: Any, result: Any, trigger_type: str = "manual") -> int:
+    def add_paper_trade(
+        self, market: Any, result: Any, trigger_type: str = "manual", *, audit_context: dict[str, Any] | None = None
+    ) -> int:
         status = "SUCCESS" if result.status == "VALID" else "FAILED"
+        payload = result.model_dump(mode="json")
+        if audit_context is not None:
+            payload["audit"] = audit_context
         with self.Session.begin() as session:
             row = PaperTradeRow(
                 market_id=market.market_id,
@@ -256,21 +308,47 @@ class Database:
                 status=status,
                 failure_reason=None if status == "SUCCESS" else result.status,
                 trigger_type=trigger_type,
-                payload_json=result.model_dump_json(),
+                payload_json=json.dumps(payload, ensure_ascii=False, allow_nan=False),
             )
             session.add(row)
             session.flush()
             return row.id
 
     def list_paper_trades(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        return list(self._paper_trade_rows(limit=limit, offset=offset))
+
+    def get_paper_trade_details(self, trade_id: int) -> dict[str, Any] | None:
         with self.Session() as session:
-            rows = session.scalars(
-                select(PaperTradeRow).order_by(PaperTradeRow.id.desc()).offset(offset).limit(limit)
-            ).all()
-            return [
-                {
+            row = session.get(PaperTradeRow, trade_id)
+            if row is None:
+                return None
+            return {
+                "id": row.id,
+                "created_at": utc_iso(row.created_at),
+                "market_id": row.market_id,
+                "market_question": row.market_question,
+                "status": row.status,
+                "failure_reason": row.failure_reason,
+                "details": json.loads(row.payload_json),
+            }
+
+    def iter_paper_trades(self) -> Iterator[dict[str, Any]]:
+        yield from self._paper_trade_rows()
+
+    def _paper_trade_rows(self, *, limit: int | None = None, offset: int = 0) -> Iterator[dict[str, Any]]:
+        with self.Session() as session:
+            statement = (
+                select(PaperTradeRow)
+                .options(defer(PaperTradeRow.payload_json))
+                .order_by(PaperTradeRow.id.desc())
+                .offset(offset)
+            )
+            if limit is not None:
+                statement = statement.limit(limit)
+            for row in session.scalars(statement.execution_options(yield_per=500)):
+                yield {
                     "id": row.id,
-                    "created_at": row.created_at.isoformat(),
+                    "created_at": utc_iso(row.created_at),
                     "market_id": row.market_id,
                     "market_question": row.market_question,
                     "target_quantity": row.target_quantity,
@@ -283,27 +361,49 @@ class Database:
                     "trigger_type": row.trigger_type,
                     "data_source": row.data_source,
                 }
-                for row in rows
-            ]
 
     def list_opportunities(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        return list(self._opportunity_rows(limit=limit, offset=offset))
+
+    def get_opportunity_details(self, opportunity_id: int) -> dict[str, Any] | None:
         with self.Session() as session:
-            rows = session.scalars(
-                select(OpportunityRow).order_by(OpportunityRow.last_seen.desc()).offset(offset).limit(limit)
-            ).all()
-            return [
-                {
+            row = session.get(OpportunityRow, opportunity_id)
+            if row is None:
+                return None
+            return {
+                "id": row.id,
+                "market_id": row.market_id,
+                "question": row.question,
+                "first_seen": utc_iso(row.first_seen),
+                "last_seen": utc_iso(row.last_seen),
+                "status": row.status,
+                "disappeared_reason": row.disappeared_reason,
+                "details": json.loads(row.payload_json),
+            }
+
+    def iter_opportunities(self) -> Iterator[dict[str, Any]]:
+        yield from self._opportunity_rows()
+
+    def _opportunity_rows(self, *, limit: int | None = None, offset: int = 0) -> Iterator[dict[str, Any]]:
+        with self.Session() as session:
+            statement = (
+                select(OpportunityRow)
+                .options(defer(OpportunityRow.payload_json))
+                .order_by(OpportunityRow.last_seen.desc(), OpportunityRow.id.desc())
+                .offset(offset)
+            )
+            if limit is not None:
+                statement = statement.limit(limit)
+            for row in session.scalars(statement.execution_options(yield_per=500)):
+                yield {
                     "id": row.id,
                     "market_id": row.market_id,
                     "question": row.question,
-                    "first_seen": row.first_seen.isoformat(),
-                    "last_seen": row.last_seen.isoformat(),
+                    "first_seen": utc_iso(row.first_seen),
+                    "last_seen": utc_iso(row.last_seen),
                     "status": row.status,
                     "max_net_profit": row.max_net_profit,
                     "max_net_roi": row.max_net_roi,
                     "max_quantity": row.max_quantity,
                     "disappeared_reason": row.disappeared_reason,
-                    "details": json.loads(row.payload_json),
                 }
-                for row in rows
-            ]

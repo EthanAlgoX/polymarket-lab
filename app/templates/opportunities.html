@@ -2,6 +2,6 @@
 {% block title %}完整集盘口候选{% endblock %}
 {% block content %}
 <p class="page-context">从选定的 Yes/No 市场中筛选共同可成交深度与正净差额。行情过期或费用未知时暂停列为候选。</p>
-<div class="toolbar"><label class="search-field"><span class="sr-only">搜索盘口候选</span><input id="search" type="search" placeholder="搜索盘口候选"></label><div class="toolbar-actions"><button id="refresh" class="button">刷新快照</button><a class="button ghost" href="/api/exports/opportunities.csv">导出已保存信号</a></div></div>
+<div class="toolbar"><label class="search-field"><span class="sr-only">搜索盘口候选</span><input id="search" type="search" placeholder="搜索英文原文或已显示的中文" maxlength="500"></label><div class="toolbar-actions"><button id="refresh" class="button">刷新快照</button><a class="button ghost" href="/api/exports/opportunities.csv">导出已保存信号</a></div></div>
 <section class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>市场</th><th>Yes 均价</th><th>No 均价</th><th>共同股数</th><th>买入成本</th><th>估算费用</th><th>估算净差额</th><th>预算收益率</th><th>查看与记录</th></tr></thead><tbody id="opportunity-table"><tr><td colspan="9" class="empty">正在检查实际订单簿…</td></tr></tbody></table></div></section>
 {% endblock %}

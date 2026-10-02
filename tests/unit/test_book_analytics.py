@@ -79,11 +79,11 @@ def test_invalid_levels_are_ignored_and_equal_prices_are_merged() -> None:
         OrderBook(
             asset_id="a",
             bids=[
-                level("-0.1", "10"),
-                level("1.01", "10"),
-                level("0.5", "0"),
-                level("0.5", "-1"),
                 # Simulate corrupted internal data that bypassed model validation.
+                PriceLevel.model_construct(price=Decimal("-0.1"), size=Decimal("10")),
+                PriceLevel.model_construct(price=Decimal("1.01"), size=Decimal("10")),
+                PriceLevel.model_construct(price=Decimal("0.5"), size=Decimal("0")),
+                PriceLevel.model_construct(price=Decimal("0.5"), size=Decimal("-1")),
                 PriceLevel.model_construct(price=Decimal("NaN"), size=Decimal("10")),
                 PriceLevel.model_construct(price=Decimal("Infinity"), size=Decimal("10")),
                 PriceLevel.model_construct(price=Decimal("0.5"), size=Decimal("Infinity")),
@@ -123,3 +123,14 @@ def test_decimal_precision_and_probability_boundaries() -> None:
 def test_tick_size_has_finite_probability_bounds(tick: str) -> None:
     book = OrderBook(asset_id="a").model_copy(update={"tick_size": Decimal(tick)})
     assert analyze_book(book)["tick_size"] is None
+
+
+def test_extreme_finite_depth_is_bounded_for_display_and_bad_arithmetic_is_unavailable() -> None:
+    huge = OrderBook(asset_id="a", bids=[level("0.4", "1e9999")], asks=[level("0.6", "1e9999")])
+    result = analyze_book(huge)
+    assert len(result["bid_depth_quantity"] or "") < 50
+    # Exact huge inputs can exceed the Decimal context while weighting prices.
+    bad = OrderBook(asset_id="a", bids=[level("0.4", "9e999999")], asks=[level("0.6", "9e999999")])
+    result = analyze_book(bad)
+    assert result["quality"] == "invalid"
+    assert result["microprice"] is None

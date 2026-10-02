@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
+from urllib.parse import quote
 
 from app.clients.http import PublicHTTPClient
 from app.models import FeeQuote, FeeStatus, OrderBook
@@ -14,15 +15,17 @@ class ClobClient:
 
     async def fetch_books(self, token_ids: list[str]) -> dict[str, OrderBook]:
         result: dict[str, OrderBook] = {}
-        for offset in range(0, len(token_ids), 500):
-            body = [{"token_id": token} for token in token_ids[offset : offset + 500]]
+        tokens = list(dict.fromkeys(token_ids))
+        for offset in range(0, len(tokens), 500):
+            requested = set(tokens[offset : offset + 500])
+            body = [{"token_id": token} for token in tokens[offset : offset + 500]]
             payload = await self.http.request_json("POST", f"{self.base_url}/books", json=body)
             if not isinstance(payload, list):
                 raise ValueError("unexpected CLOB books response")
             for item in payload:
                 if isinstance(item, dict):
                     book = normalize_orderbook(item)
-                    if book.asset_id:
+                    if book.asset_id in requested:
                         result[book.asset_id] = book
         return result
 
@@ -30,7 +33,9 @@ class ClobClient:
         if fees_enabled is False:
             return FeeQuote(status=FeeStatus.KNOWN, base_fee_bps=Decimal("0"))
         try:
-            payload = await self.http.request_json("GET", f"{self.base_url}/markets/{condition_id}")
+            payload = await self.http.request_json(
+                "GET", f"{self.base_url}/clob-markets/{quote(condition_id, safe='')}"
+            )
         except Exception as exc:
             return FeeQuote(status=FeeStatus.UNKNOWN, reason=type(exc).__name__)
         if not isinstance(payload, dict):
@@ -44,8 +49,11 @@ class ClobClient:
                 return FeeQuote(status=FeeStatus.UNKNOWN, reason="fee rate absent")
         try:
             rate = Decimal(str(value))
+            exponent = Decimal(str(fee_data.get("e"))) if isinstance(fee_data, dict) else None
         except (InvalidOperation, ValueError):
             return FeeQuote(status=FeeStatus.UNKNOWN, reason="invalid fee rate")
-        if not rate.is_finite() or rate < 0:
+        if not rate.is_finite() or rate < 0 or rate > 1:
             return FeeQuote(status=FeeStatus.UNKNOWN, reason="invalid fee rate")
+        if exponent is None or not exponent.is_finite() or exponent != Decimal("1"):
+            return FeeQuote(status=FeeStatus.UNKNOWN, reason="unsupported or absent fee exponent")
         return FeeQuote(status=FeeStatus.KNOWN, base_fee_bps=rate * Decimal("1000"))

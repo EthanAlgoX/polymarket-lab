@@ -114,3 +114,63 @@ async def test_new_connection_delivers_unchanged_initial_snapshot(monkeypatch: p
     assert len(received) == 2
     assert received[0] == received[1]
     assert client.connected is False
+
+
+@pytest.mark.asyncio
+async def test_handler_failure_isolated_to_one_message_and_retry_not_deduplicated() -> None:
+    received: list[str] = []
+    calls = 0
+
+    async def handler(payload: dict[str, Any]) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ValueError("bad snapshot")
+        received.append(payload["asset_id"])
+
+    client = MarketWebSocket("wss://example.invalid", handler)
+    bad = {"event_type": "book", "asset_id": "a"}
+    good = {"event_type": "book", "asset_id": "b"}
+    await client._process(json.dumps([bad, good]))
+    await client._process(json.dumps(bad))
+    assert received == ["b", "a"]
+    assert client.errors == 1
+    assert client.messages == 2
+    assert len(client._seen) == 2
+
+
+@pytest.mark.asyncio
+async def test_busy_stream_still_sends_fixed_interval_heartbeat(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    clock = SimpleNamespace(now=0.0)
+    received = 0
+    sent: list[tuple[str, float]] = []
+
+    async def handler(payload: dict[str, Any]) -> None:
+        nonlocal received
+        received += 1
+        if received == 3:
+            await client.stop()
+
+    class Socket:
+        async def send(self, value: str) -> None:
+            sent.append((value, clock.now))
+
+        async def recv(self) -> str:
+            clock.now += 10
+            return json.dumps({"event_type": "book", "asset_id": "a", "timestamp": str(clock.now)})
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_: object):
+            pass
+
+    monkeypatch.setattr("app.clients.websocket_client.connect", lambda *_args, **_kwargs: Socket())
+    monkeypatch.setattr("app.clients.websocket_client.time", SimpleNamespace(monotonic=lambda: clock.now))
+    client = MarketWebSocket("wss://example.invalid", handler)
+    client.set_tokens({"a"})
+    await client.run()
+    assert received == 3
+    assert [(value, moment) for value, moment in sent if value == "PING"] == [("PING", 10), ("PING", 20)]

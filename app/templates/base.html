@@ -8,11 +8,11 @@
   <link rel="stylesheet" href="/static/css/app.css">
   <link rel="stylesheet" href="/static/css/market-language.css">
   <link rel="stylesheet" href="/static/css/site-shell.css">
-  <link rel="stylesheet" href="/static/css/research-tools.css?v=20261003">
-  <script src="/static/js/market-language.js" defer></script>
+  <link rel="stylesheet" href="/static/css/research-tools.css?v=20261003-audit">
+  <script src="/static/js/market-language.js?v=20261003-audit" defer></script>
   <script src="/static/js/site-navigation.js" defer></script>
-  <script src="/static/js/book-quality.js" defer></script>
-  <script src="/static/js/app.js?v=20261003" defer></script>
+  <script src="/static/js/book-quality.js?v=20261003-audit" defer></script>
+  <script src="/static/js/app.js?v=20261003-audit" defer></script>
 </head>
 <body data-page="{{ page }}"{% if market_id %} data-market-id="{{ market_id }}"{% endif %}>
   {% include "sidebar.html" %}
@@ -22,6 +22,7 @@
       <div class="page-header-tools">{% include "language_controls.html" %}<div id="clock" class="clock"></div></div>
     </header>
     <div id="error" class="error hidden" role="alert"></div>
+    <p id="snapshot-state" class="snapshot-state" role="status"></p>
     {% block content %}{% endblock %}
     <footer class="workspace-footer">
       <p>盘口结果为快照估算；双腿成交独立，合并与链上成本需要另行核验。此工具不提交订单。</p>

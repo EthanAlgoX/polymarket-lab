@@ -22,7 +22,7 @@ from dotenv import dotenv_values
 # Cheapest model in DeepSeek's official API price table (verified 2026-10-02).
 # Keep all translation and corrective requests on Flash, with thinking disabled.
 MODEL = "deepseek-flash"  # Official API alias for DeepSeek V4.1 Flash.
-PROMPT_VERSION = "market-zh-v1"
+PROMPT_VERSION = "market-zh-v2"
 COMMON = {"Yes": "是", "No": "否", "Up": "上涨", "Down": "下跌", "Draw": "平局", "Other": "其他"}
 TEXT_FIELDS = {"question", "event", "description", "outcomes", "tags", "market_question"}
 SYSTEM_PROMPT = """You translate public Polymarket market text into Simplified Chinese.
@@ -52,8 +52,8 @@ def deepseek_key() -> str:
     """Read only explicitly named translation credentials; never expose or persist them."""
     names = ("DEEPSEEK_API_KEY", "DEEPSEEK_KEY", "PMS_DEEPSEEK_API_KEY")
     for name in names:
-        if os.environ.get(name):
-            return os.environ[name].strip()
+        if value := os.environ.get(name, "").strip():
+            return value
     local = dotenv_values(".env")
     return next((str(local[name]).strip() for name in names if local.get(name)), "")
 
@@ -67,14 +67,45 @@ def deepseek_api_base() -> str:
 
 def numeric_terms(text: str) -> Counter:
     terms: Counter = Counter()
-    for token in re.findall(r"\d+(?:[.,]\d+)*", text):
-        if re.fullmatch(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", token):
+    # A leading minus is meaningful in weather and return markets, but a date's
+    # hyphens and team-name digits are not signs. Chinese adjacency is permitted.
+    for token in re.findall(r"(?<![A-Za-z0-9_.])[-−+]\d+(?:[.,]\d+)*|\d+(?:[.,]\d+)*", text):
+        token = token.replace("−", "-")
+        if re.fullmatch(r"[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?", token):
             token = token.replace(",", "")
         try:
             value: Decimal | str = Decimal(token)
         except InvalidOperation:
             value = token
         terms[value] += 1
+    return terms
+
+
+def source_chunks(source: str) -> list[str]:
+    """Match the browser's lossless UTF-16 rule splitting, without authorizing substrings."""
+    encoded = source.encode("utf-16-le")
+    if len(encoded) <= 36000:
+        return [source]
+    units = "".join(chr(int.from_bytes(encoded[i : i + 2], "little")) for i in range(0, len(encoded), 2))
+    parts = []
+    while len(units) > 18000:
+        boundary = units.rfind("\n", 0, 18001)
+        if boundary < 9000:
+            boundary = units.rfind(". ", 0, 18002)
+        boundary = 18000 if boundary < 9000 else boundary + 1
+        if 0xD800 <= ord(units[boundary - 1]) <= 0xDBFF:
+            boundary -= 1
+        parts.append(units[:boundary])
+        units = units[boundary:]
+    parts.append(units)
+    return [b"".join(ord(char).to_bytes(2, "little") for char in part).decode("utf-16-le") for part in parts]
+
+
+def protected_terms(text: str) -> Counter:
+    """Symbols and public source URLs must survive a translation verbatim."""
+    terms = Counter(re.findall(r"[$€£¥¢%°≤≥<>]", text))
+    # Sentence punctuation is not part of the linked settlement source.
+    terms.update(url.rstrip(".,;:!?)]}。；，") for url in re.findall(r"https?://[^\s<>\"']+", text))
     return terms
 
 
@@ -96,17 +127,21 @@ class DeepSeekTranslator:
     ) -> list[str | TranslationFailure]:
         if not self.available:
             raise TranslationFailure("后端尚未读取到 DeepSeek API 环境变量")
-        endpoint = urlsplit(self.api_base)
-        if not (
-            endpoint.scheme == "https"
-            and endpoint.hostname == "api.deepseek.com"
-            and endpoint.path in {"", "/v1"}
-            and not endpoint.query
-            and not endpoint.fragment
-            and not endpoint.username
-            and not endpoint.password
-            and endpoint.port in {None, 443}
-        ):
+        try:
+            endpoint = urlsplit(self.api_base)
+            valid_endpoint = (
+                endpoint.scheme == "https"
+                and endpoint.hostname == "api.deepseek.com"
+                and endpoint.path in {"", "/v1"}
+                and not endpoint.query
+                and not endpoint.fragment
+                and not endpoint.username
+                and not endpoint.password
+                and endpoint.port in {None, 443}
+            )
+        except ValueError:
+            valid_endpoint = False
+        if not valid_endpoint:
             raise TranslationFailure("DeepSeek API 地址配置无效，请使用官方 HTTPS 地址")
         try:
             response = await self.client.post(
@@ -149,8 +184,10 @@ class DeepSeekTranslator:
                     if not isinstance(value, str) or not value.strip() or len(value) > 40000:
                         raise ValueError("empty or oversized translation")
                     # Compare exact numeric values, permitting harmless comma/zero formatting.
-                    if numeric_terms(source) - numeric_terms(value):
-                        raise ValueError("omitted numeric terms")
+                    if numeric_terms(source) != numeric_terms(value):
+                        raise ValueError("changed numeric terms")
+                    if protected_terms(source) != protected_terms(value):
+                        raise ValueError("changed protected terms")
                     if len(source.split()) >= 5 and not re.search(r"[\u3400-\u9fff]", value):
                         raise ValueError("untranslated sentence")
                     translated.append(value.strip())
@@ -172,7 +209,7 @@ class TranslationService:
         self.database: sqlite3.Connection | None = None
         self.queue: asyncio.Queue[str] = asyncio.Queue(maxsize=2000)
         self.pending: set[str] = set()
-        self.errors: dict[str, tuple[float, str]] = {}
+        self.errors: OrderedDict[str, tuple[float, str]] = OrderedDict()
         self.registered: OrderedDict[str, None] = OrderedDict()
         self.registry_lock = RLock()
         self.tasks: list[asyncio.Task[None]] = []
@@ -211,8 +248,9 @@ class TranslationService:
         elif field in TEXT_FIELDS and isinstance(payload, str):
             # FastAPI's synchronous data routes register fields from worker threads.
             with self.registry_lock:
-                self.registered[payload] = None
-                self.registered.move_to_end(payload)
+                for source in source_chunks(payload):
+                    self.registered[source] = None
+                    self.registered.move_to_end(source)
                 while len(self.registered) > 20000:
                     self.registered.popitem(last=False)
 
@@ -229,14 +267,9 @@ class TranslationService:
         items = []
         for source in dict.fromkeys(texts):
             item = {"source": source, "text": source, "status": "pending"}
-            # The UI losslessly splits exceptionally long rules. Every piece still
-            # has to come from a public field already served to this browser.
+            # Only exact fields or their deterministic display chunks may spend credits.
             with self.registry_lock:
-                allowed = (
-                    source in self.registered
-                    or source in COMMON
-                    or any(len(original) > 18000 and source in original for original in self.registered)
-                )
+                allowed = source in self.registered or source in COMMON
             if not allowed:
                 item.update(status="error", reason="只能翻译已展示的公开市场文本")
             elif source in COMMON or not re.search(r"[A-Za-z]", source):
@@ -256,6 +289,12 @@ class TranslationService:
                     item.update(status="error", reason="翻译队列繁忙，请稍后重试")
             items.append(item)
         return {"items": items, "provider": "deepseek", "model": MODEL, "available": self.provider.available}
+
+    def _record_error(self, source: str, reason: str) -> None:
+        self.errors[source] = (time.monotonic(), reason)
+        self.errors.move_to_end(source)
+        while len(self.errors) > 20000:
+            self.errors.popitem(last=False)
 
     async def _worker(self) -> None:
         carry: str | None = None
@@ -294,7 +333,7 @@ class TranslationService:
                 rows = []
                 for source, value in zip(sources, translated, strict=True):
                     if isinstance(value, TranslationFailure):
-                        self.errors[source] = (time.monotonic(), str(value))
+                        self._record_error(source, str(value))
                     else:
                         rows.append((self.cache_key(source), source, value, time.time()))
                 self.database.executemany(
@@ -304,10 +343,10 @@ class TranslationService:
                 self.database.commit()
             except TranslationFailure as exc:
                 for source in sources:
-                    self.errors[source] = (time.monotonic(), str(exc))
+                    self._record_error(source, str(exc))
             except Exception:
                 for source in sources:
-                    self.errors[source] = (time.monotonic(), "翻译暂时不可用，请稍后重试")
+                    self._record_error(source, "翻译暂时不可用，请稍后重试")
             finally:
                 for source in sources:
                     self.pending.discard(source)

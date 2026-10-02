@@ -2,8 +2,8 @@
 (() => {
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const number = (value, digits=2) => value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('zh-CN', {maximumFractionDigits:digits});
-  const price = value => value == null ? '—' : number(Number(value) * 100, 3) + '¢';
-  const quality = {normal:'双边盘口', crossed:'交叉盘口', 'one-sided':'单边盘口', unavailable:'缺少盘口'};
+  const price = value => value == null || !Number.isFinite(Number(value)) ? '—' : number(Number(value) * 100, 3) + '¢';
+  const quality = {normal:'双边盘口', crossed:'交叉盘口', 'one-sided':'单边盘口', unavailable:'缺少盘口', invalid:'盘口数据无效'};
 
   function html(analyses, labels) {
     if (!Array.isArray(analyses) || !analyses.length) return '';

@@ -8,7 +8,7 @@ independent; no market-making or execution code is imported.
 from __future__ import annotations
 
 from collections import defaultdict
-from decimal import Decimal, localcontext
+from decimal import Decimal, DecimalException, localcontext
 
 from app.models import OrderBook, PriceLevel
 
@@ -21,7 +21,10 @@ def _levels(levels: list[PriceLevel]) -> dict[Decimal, Decimal]:
     merged: dict[Decimal, Decimal] = defaultdict(lambda: ZERO)
     for level in levels:
         if level.price.is_finite() and level.size.is_finite() and ZERO <= level.price <= ONE and level.size > ZERO:
-            merged[level.price] += level.size
+            try:
+                merged[level.price] += level.size
+            except DecimalException:
+                merged.pop(level.price, None)
     return dict(merged)
 
 
@@ -30,11 +33,14 @@ def _number(value: Decimal | None) -> str | None:
         return None
     if value == ZERO:
         return "0"
+    if abs(value.adjusted()) > 50:
+        # Avoid expanding malicious exponents into megabytes of display text.
+        return str(value.normalize())
     text = format(value, "f")
     return text.rstrip("0").rstrip(".") if "." in text else text
 
 
-def analyze_book(book: OrderBook) -> dict[str, str | None]:
+def _analyze_book(book: OrderBook) -> dict[str, str | None]:
     """Summarize one token without mutating it or inventing its other outcome.
 
     Depth includes bids within two cents below the best bid and asks within two
@@ -92,3 +98,12 @@ def analyze_book(book: OrderBook) -> dict[str, str | None]:
             "bid_depth_collateral": _number(sum((price * size for price, size in bid_band.items()), ZERO)),
             "ask_depth_collateral": _number(sum((price * size for price, size in ask_band.items()), ZERO)),
         }
+
+
+def analyze_book(book: OrderBook) -> dict[str, str | None]:
+    try:
+        return _analyze_book(book)
+    except DecimalException:
+        result = _analyze_book(OrderBook(asset_id=book.asset_id, timestamp=book.timestamp))
+        result["quality"] = "invalid"
+        return result

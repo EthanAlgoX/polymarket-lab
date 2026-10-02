@@ -256,7 +256,9 @@ async def test_selection_ties_are_stable_and_zero_budget_is_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runtime_applies_thresholds_before_filling_scanner_budget(tmp_path: Any) -> None:
+async def test_runtime_applies_thresholds_before_filling_scanner_budget(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runtime = ScannerRuntime(
         Settings(
             enable_live_scanner=False,
@@ -273,6 +275,12 @@ async def test_runtime_applies_thresholds_before_filling_scanner_budget(tmp_path
         *[event(f"good-{category}", category) for category in CATEGORIES],
     ]
     runtime.catalog.http = StubHTTP(seed_responses(events))
+    available = {raw["id"]: raw for one_event in events for raw in one_event["markets"]}
+
+    async def current_markets(ids: list[str]) -> list[dict[str, Any]]:
+        return [dict(available[market_id]) for market_id in ids]
+
+    monkeypatch.setattr(runtime.gamma, "fetch_markets_by_ids", current_markets)
     try:
         await runtime.catalog.seed()
         await runtime.refresh_markets()
@@ -281,5 +289,120 @@ async def test_runtime_applies_thresholds_before_filling_scanner_budget(tmp_path
         assert len({market.category for market in runtime.markets.values()}) == 5
         assert runtime.catalog.summary()["scannerSelection"]["excluded"]["belowVolume"] == 1
         assert runtime.status.binary_market_count == 5
+        assert runtime.catalog.summary()["scannerSelection"]["verification"]["verifiedTotal"] == 5
     finally:
         await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_complete_active_traversal_removes_seed_only_market_without_closed_row() -> None:
+    http = StubHTTP(
+        [
+            *seed_responses([event("closed-between-reads"), event("keep")]),
+            {"events": [event("keep")], "has_more": False},
+        ]
+    )
+    catalog = MarketCatalog(http, "https://example.test")
+    await catalog.seed()
+    assert "closed-between-reads" in catalog.items
+    await catalog.crawl()
+    assert set(catalog.items) == set(catalog.raw) == {"keep"}
+    assert catalog.coverage == "paginated"
+
+
+@pytest.mark.asyncio
+async def test_capped_traversal_keeps_fresh_seed_only_rows_and_honest_coverage() -> None:
+    http = StubHTTP([*seed_responses([event("seed-only")]), {"events": [event("traversed")], "limit_reached": True}])
+    catalog = MarketCatalog(http, "https://example.test")
+    await catalog.seed()
+    await catalog.crawl()
+    assert set(catalog.items) == {"seed-only", "traversed"}
+    assert catalog.coverage == "capped"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_event", [None, {}, {"id": "bad", "markets": [None]}, {"id": "bad", "markets": {"id": "x"}}]
+)
+async def test_bad_event_records_fail_closed_and_preserve_published_data(bad_event: Any) -> None:
+    http = StubHTTP([*seed_responses([event("keep")]), {"events": [bad_event], "has_more": False}])
+    catalog = MarketCatalog(http, "https://example.test")
+    await catalog.seed()
+    previous = catalog.snapshot
+    await catalog.crawl()
+    assert catalog.snapshot.items is previous.items
+    assert catalog.snapshot.revision == previous.revision
+    assert catalog.coverage == "partial"
+    assert catalog.error is not None
+    assert not catalog.refreshing
+
+
+@pytest.mark.asyncio
+async def test_catalog_nullable_tags_and_text_do_not_break_json_or_filters() -> None:
+    raw_event = event("safe", question=None, endDate=123, createdAt={})
+    raw_event.update({"tags": [None, {"slug": "weather", "label": "Weather"}], "title": None})
+    catalog = MarketCatalog(
+        StubHTTP(seed_responses([raw_event, event("overflow", liquidityNum="1e1000000")])), "https://example.test"
+    )
+    await catalog.seed()
+    row = catalog.items["safe"]
+    assert row["question"] == row["event"] == ""
+    assert row["endDate"] is row["createdAt"] is None
+    assert row["category"] == "weather"
+    assert row["tags"] == ["Weather"]
+    assert row["liquidity"] == 2000
+    assert "overflow" not in catalog.items
+    assert catalog.summary()["invalidRecords"] == 5
+
+
+@pytest.mark.asyncio
+async def test_one_invalid_seed_query_does_not_discard_other_healthy_samples() -> None:
+    http = StubHTTP(
+        [{"events": None}, {"events": [None]}, RuntimeError("query unavailable"), {"events": [event("healthy")]}, {}]
+    )
+    catalog = MarketCatalog(http, "https://example.test")
+    await catalog.seed()
+    assert set(catalog.items) == {"healthy"}
+    assert catalog.coverage == "sample"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome_prices", [[None, "0.7"], ["", "0.7"], [0.3, 0.7], ["0.3"]])
+async def test_catalog_prices_keep_outcome_positions(outcome_prices: list[object]) -> None:
+    catalog = MarketCatalog(
+        StubHTTP(seed_responses([event("pair", outcomePrices=outcome_prices)])), "https://example.test"
+    )
+    await catalog.seed()
+    prices = catalog.items["pair"]["prices"]
+    assert len(prices) == 2
+    if len(outcome_prices) == 2:
+        assert prices[1] == 0.7
+    else:
+        assert prices[1] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_after_resolution", [False, True])
+async def test_resolution_during_crawl_cannot_be_revived_by_publication_or_fallback(
+    fail_after_resolution: bool,
+) -> None:
+    catalog = MarketCatalog(StubHTTP(seed_responses([event("resolved"), event("keep")])), "https://example.test")
+    await catalog.seed()
+    old_time = catalog.updated_at
+
+    def resolution():
+        catalog.exclude_resolved("resolved")
+        assert "resolved" not in catalog.items
+        if fail_after_resolution:
+            raise ValueError("page unavailable")
+        return {"events": [event("resolved"), event("keep")], "has_more": False}
+
+    catalog.http.responses.append(resolution)
+    await catalog.crawl()
+    assert set(catalog.items) == set(catalog.raw) == {"keep"}
+    assert catalog.is_resolved("resolved")
+    assert catalog.summary()["total"] == 1
+    assert sum(category["count"] for category in catalog.summary()["categories"]) == 1
+    if fail_after_resolution:
+        assert catalog.updated_at == old_time
+        assert catalog.coverage == "partial"

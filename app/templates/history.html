@@ -2,5 +2,7 @@
 {% block title %}盘口信号历史{% endblock %}
 {% block content %}
 <p class="page-context">回看曾通过扫描门槛的快照，比较信号持续时间和估算差额。历史数值不是当前可成交报价。</p>
+<div class="toolbar"><button id="refresh" class="button">刷新历史</button></div>
 <section class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>市场</th><th>首次发现</th><th>最近发现</th><th>最大估算差额</th><th>最大预算收益率</th><th>最大共同股数</th><th>状态</th></tr></thead><tbody id="history-table"><tr><td colspan="7" class="empty">正在读取已保存信号…</td></tr></tbody></table></div></section>
+<div class="record-pagination"><span id="record-page" role="status"></span><div><button id="record-previous" class="button ghost" disabled>上一页</button><button id="record-next" class="button ghost" disabled>下一页</button></div></div>
 {% endblock %}

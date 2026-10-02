@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -62,19 +63,28 @@ class MarketWebSocket:
                     await websocket.send(
                         json.dumps({"assets_ids": sorted(subscribed), "type": "market", "custom_feature_enabled": True})
                     )
+                    heartbeat_at = time.monotonic() + 10
                     while not self._stop.is_set():
                         if self.tokens != subscribed:
                             self.connected = False
                             await websocket.close()
                             break
+                        remaining = heartbeat_at - time.monotonic()
+                        if remaining <= 0:
+                            await websocket.send("PING")
+                            heartbeat_at = time.monotonic() + 10
+                            remaining = 10
                         try:
-                            raw = await asyncio.wait_for(websocket.recv(), timeout=10)
+                            raw = await asyncio.wait_for(websocket.recv(), timeout=remaining)
                         except TimeoutError:
                             await websocket.send("PING")
+                            heartbeat_at = time.monotonic() + 10
                             continue
+                        if isinstance(raw, bytes):
+                            raw = raw.decode("utf-8")
                         if raw == "PONG":
                             continue
-                        await self._process(str(raw))
+                        await self._process(raw)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -112,9 +122,19 @@ class MarketWebSocket:
             ).hexdigest()
             if fingerprint in self._seen:
                 continue
+            try:
+                await self.handler(item)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.errors += 1
+                logger.warning(
+                    "websocket message could not be processed",
+                    extra={"event": "websocket_message_error", "error_type": type(exc).__name__},
+                )
+                continue
             self._seen[fingerprint] = None
             if len(self._seen) > MAX_SEEN_MESSAGES:
                 self._seen.popitem(last=False)
             self.messages += 1
             self.last_message = datetime.now(UTC)
-            await self.handler(item)

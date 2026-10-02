@@ -71,7 +71,7 @@ def test_buffers_reduce_net_profit() -> None:
     assert result.net_profit == Decimal("1.840000")
 
 
-@pytest.mark.parametrize("target", ["0", "-1"])
+@pytest.mark.parametrize("target", ["0", "-1", "NaN", "Infinity", "-Infinity"])
 def test_invalid_target(target: str) -> None:
     with pytest.raises(ValueError):
         calculate_depth(book("y", []), book("n", []), Decimal(target), fee())
@@ -91,3 +91,113 @@ def test_decimal_precision_is_exact() -> None:
     )
     assert result.executable_quantity == Decimal("0.000003")
     assert isinstance(result.total_cost, Decimal)
+
+
+@pytest.mark.parametrize("parameter", ["slippage_rate", "safety_rate", "quote_age", "extra_cost"])
+@pytest.mark.parametrize("value", ["-1", "NaN", "Infinity"])
+def test_bad_financial_inputs_cannot_increase_profit(parameter: str, value: str) -> None:
+    with pytest.raises(ValueError):
+        calculate_depth(
+            book("y", [("0.4", "2")]), book("n", [("0.4", "2")]), Decimal("1"), fee(), **{parameter: Decimal(value)}
+        )
+
+
+@pytest.mark.parametrize(
+    ("price", "size"), [("-0.1", "2"), ("1.1", "2"), ("NaN", "2"), ("0.4", "-2"), ("0.4", "0"), ("0.4", "Infinity")]
+)
+def test_corrupted_internal_levels_fail_closed(price: str, size: str) -> None:
+    bad = OrderBook(asset_id="y", asks=[PriceLevel.model_construct(price=Decimal(price), size=Decimal(size))])
+    result = calculate_depth(bad, book("n", [("0.4", "2")]), Decimal("1"), fee())
+    assert result.status == "INVALID_BOOK"
+    assert result.executable_quantity == 0
+    assert result.net_profit is None and result.net_roi is None
+
+
+@pytest.mark.parametrize("same_market", [True, False])
+def test_invalid_pair_never_creates_a_complete_set(same_market: bool) -> None:
+    yes, no = book("y", [("0.4", "2")]), book("y" if same_market else "n", [("0.4", "2")])
+    if not same_market:
+        yes.market, no.market = "condition-one", "condition-two"
+    result = calculate_depth(yes, no, Decimal("1"), fee())
+    assert result.status == "INVALID_PAIR"
+    assert result.settlement_value == 0 and result.net_profit is None
+
+
+def test_unsorted_crossed_book_is_rejected_and_locked_book_is_supported() -> None:
+    yes = book("y", [("0.45", "2"), ("0.40", "2")])
+    yes.bids = [
+        PriceLevel(price=Decimal("0.39"), size=Decimal("3")),
+        PriceLevel(price=Decimal("0.41"), size=Decimal("2")),
+    ]
+    assert calculate_depth(yes, book("n", [("0.4", "2")]), Decimal("1"), fee()).status == "CROSSED_BOOK"
+    yes.bids = [PriceLevel(price=Decimal("0.40"), size=Decimal("2"))]
+    assert calculate_depth(yes, book("n", [("0.4", "2")]), Decimal("1"), fee()).status == "VALID"
+
+
+def test_known_fee_without_a_valid_rate_cannot_be_valid() -> None:
+    for rate in (None, Decimal("NaN"), Decimal("-1")):
+        invalid = FeeQuote.model_construct(status=FeeStatus.KNOWN, base_fee_bps=rate)
+        result = calculate_depth(book("y", [("0.4", "2")]), book("n", [("0.4", "2")]), Decimal("1"), invalid)
+        assert result.status == "FEE_UNKNOWN" and result.fee_status is FeeStatus.UNKNOWN
+        assert result.estimated_fees is None and result.net_profit is None
+
+
+def test_minimum_order_quantity_is_checked_by_the_calculator() -> None:
+    yes = book("y", [("0.4", "2")])
+    yes.min_order_size = Decimal("2")
+    assert calculate_depth(yes, book("n", [("0.4", "2")]), Decimal("1"), fee()).status == "BELOW_MIN_ORDER"
+
+
+def test_fingerprint_identifies_actual_depth_and_cost_parameters_without_hashes() -> None:
+    yes, no = book("y", [("0.4", "2")]), book("n", [("0.4", "2")])
+    yes.book_hash = no.book_hash = ""
+    initial = calculate_depth(yes, no, Decimal("1"), fee()).snapshot_fingerprint
+    assert calculate_depth(yes, no, Decimal("1"), fee()).snapshot_fingerprint == initial
+    assert calculate_depth(yes, no, Decimal("1"), fee("50")).snapshot_fingerprint != initial
+    assert calculate_depth(yes, no, Decimal("1"), fee(), extra_cost=Decimal("1")).snapshot_fingerprint != initial
+    yes.asks = [PriceLevel(price=Decimal("0.41"), size=Decimal("2"))]
+    assert calculate_depth(yes, no, Decimal("1"), fee()).snapshot_fingerprint != initial
+
+
+@pytest.mark.parametrize(("shares", "price"), [("-1", "0.5"), ("NaN", "0.5"), ("1", "-0.1"), ("1", "1.1")])
+def test_invalid_fee_inputs_raise_instead_of_creating_negative_fees(shares: str, price: str) -> None:
+    with pytest.raises(ValueError):
+        taker_fee(Decimal(shares), Decimal(price), fee("50"))
+
+
+def test_extreme_finite_fee_cannot_raise_decimal_errors_out_of_the_scanner() -> None:
+    result = calculate_depth(book("y", [("0.4", "2")]), book("n", [("0.4", "2")]), Decimal("1"), fee("1e9999"))
+    assert result.status == "INVALID_CALCULATION"
+    assert result.executable_quantity == 0 and result.net_profit is None
+
+
+@pytest.mark.parametrize(
+    ("yes_condition", "no_condition", "expected_status"),
+    [
+        ("foreign", "foreign", "INVALID_PAIR"),
+        ("condition", "foreign", "INVALID_PAIR"),
+        ("foreign", "", "INVALID_PAIR"),
+        ("condition", "condition", "VALID"),
+        ("condition", "", "VALID"),
+        ("", "", "VALID"),
+    ],
+)
+def test_orderbooks_are_bound_to_the_callers_known_condition(
+    yes_condition: str, no_condition: str, expected_status: str
+) -> None:
+    yes, no = book("y", [("0.4", "2")]), book("n", [("0.4", "2")])
+    yes.market, no.market = yes_condition, no_condition
+    result = calculate_depth(yes, no, Decimal("1"), fee(), expected_condition_id="condition")
+    assert result.status == expected_status
+    if expected_status == "INVALID_PAIR":
+        assert result.executable_quantity == 0 and result.net_profit is None
+    else:
+        assert result.executable_quantity == 1 and result.net_profit is not None
+
+
+def test_expected_condition_is_traceable_even_when_schema_omits_it_from_books() -> None:
+    yes, no = book("y", [("0.4", "2")]), book("n", [("0.4", "2")])
+    without = calculate_depth(yes, no, Decimal("1"), fee())
+    known = calculate_depth(yes, no, Decimal("1"), fee(), expected_condition_id="condition")
+    assert without.status == known.status == "VALID"
+    assert without.snapshot_fingerprint != known.snapshot_fingerprint

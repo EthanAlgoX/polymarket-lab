@@ -66,11 +66,13 @@ async def test_runtime_invalid_source_time_cannot_create_zero_fee_candidate(
         }
     )
     runtime.markets = {"1": market}
+    runtime.status.gamma_status = "正常"
     fresh_timestamp = str(int(datetime.now(UTC).timestamp() * 1000))
     books = {
         token: OrderBook(
             asset_id=token,
             timestamp=timestamp,
+            min_order_size=Decimal("1"),
             asks=[PriceLevel(price=Decimal("0.4"), size=Decimal("100"))],
         )
         for token, timestamp in (("yes", bad_timestamp), ("no", fresh_timestamp))

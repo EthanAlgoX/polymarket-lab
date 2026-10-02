@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}数据链路日志{% endblock %}
 {% block content %}
-<div class="toolbar"><p class="page-context">检查采集、刷新和连接异常。</p><label class="log-filter">事件级别<select id="log-level"><option value="">全部级别</option><option>INFO</option><option>WARNING</option><option>ERROR</option></select></label></div>
+<div class="toolbar"><p class="page-context">检查采集、刷新和连接异常。显示最近 100 条事件，每 5 秒刷新。</p><div class="toolbar-actions"><label class="log-filter">事件级别<select id="log-level"><option value="">全部级别</option><option>INFO</option><option>WARNING</option><option>ERROR</option></select></label><button id="refresh" class="button">刷新日志</button></div></div>
 <section class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>发生时间</th><th>级别</th><th>链路</th><th>事件</th><th>详情</th></tr></thead><tbody id="log-table"><tr><td colspan="5" class="empty">正在读取运行日志…</td></tr></tbody></table></div></section>
 {% endblock %}

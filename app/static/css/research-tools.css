@@ -22,3 +22,6 @@
 .http-metrics b{color:var(--text);font-weight:500;font-variant-numeric:tabular-nums}
 @media(max-width:760px){.book-quality table{min-width:540px}.repo-review-meta{display:block}.repo-review-meta span{display:block;margin-bottom:7px}.repo-review-controls button{flex:1}.repo-grid .repo{padding:18px}.book-quality th,.book-quality td{padding:10px 8px}}
 @media(max-width:480px){main.site-content>header{flex-direction:column;align-items:flex-start;gap:16px}.header-right{width:100%;justify-content:space-between;flex-wrap:wrap}}
+.snapshot-state{margin:0 0 16px;color:var(--muted);font-size:12px}.snapshot-state:empty{display:none}.record-pagination{display:flex;justify-content:space-between;gap:12px;align-items:center;color:var(--muted);font-size:13px}.record-pagination>div{display:flex;gap:9px}.button:disabled{opacity:.5;cursor:default}
+.drawer-actions{display:flex;gap:8px}
+.calculation-source{margin-top:20px;font-size:13px}.calculation-source summary{cursor:pointer;color:var(--muted)}.calculation-source h3{font-size:14px;margin:15px 0 7px}.calculation-source p{font-size:12px}.calculation-source table{min-width:0}.form-actions span[data-state="dirty"],.form-actions span[data-state="pending"]{color:var(--muted)}.form-actions span[data-state="error"]{color:var(--red)}

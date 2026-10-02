@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}模拟观察记录{% endblock %}
 {% block content %}
-<div class="toolbar"><p class="page-context">保存当时的盘口估算，用于观察信号。记录不代表成交或已实现收益。</p><a class="button ghost" href="/api/exports/paper-trades.csv">导出记录</a></div>
+<div class="toolbar"><p class="page-context">保存当时的盘口估算，用于观察信号。记录不代表成交或已实现收益。</p><div class="toolbar-actions"><button id="refresh" class="button">刷新记录</button><a class="button ghost" href="/api/exports/paper-trades.csv">导出记录</a></div></div>
 <section class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>记录时间</th><th>市场</th><th>目标股数</th><th>共同股数</th><th>买入成本</th><th>估算净差额</th><th>记录状态</th><th>来源</th></tr></thead><tbody id="paper-table"><tr><td colspan="8" class="empty">正在读取模拟记录…</td></tr></tbody></table></div></section>
+<div class="record-pagination"><span id="record-page" role="status"></span><div><button id="record-previous" class="button ghost" disabled>上一页</button><button id="record-next" class="button ghost" disabled>下一页</button></div></div>
 {% endblock %}

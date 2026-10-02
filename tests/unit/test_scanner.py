@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from app.models import FeeQuote, FeeStatus, Market, OrderBook, PriceLevel
 from app.services.depth_calculator import calculate_depth
 from app.services.scanner import is_valid_opportunity
@@ -75,6 +77,53 @@ def test_profit_threshold_rejected() -> None:
         result(),
         min_quantity=Decimal("1"),
         min_profit=Decimal("100"),
+        min_roi=Decimal("0"),
+        max_quote_age=Decimal("5"),
+    )[0]
+
+
+def test_disabled_orderbook_market_is_rejected() -> None:
+    m = market().model_copy(update={"enable_order_book": False})
+    assert not is_valid_opportunity(
+        m,
+        result(),
+        min_quantity=Decimal("1"),
+        min_profit=Decimal("0"),
+        min_roi=Decimal("0"),
+        max_quote_age=Decimal("5"),
+    )[0]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("quote_age", Decimal("NaN")),
+        ("quote_age", Decimal("-1")),
+        ("net_profit", Decimal("Infinity")),
+        ("net_roi", Decimal("NaN")),
+        ("estimated_fees", Decimal("-1")),
+        ("fee_status", FeeStatus.UNKNOWN),
+        ("partial_fill", True),
+    ],
+)
+def test_corrupted_results_are_rejected_without_decimal_exceptions(field: str, value: object) -> None:
+    r = result().model_copy(update={field: value})
+    assert not is_valid_opportunity(
+        market(),
+        r,
+        min_quantity=Decimal("1"),
+        min_profit=Decimal("0"),
+        min_roi=Decimal("0"),
+        max_quote_age=Decimal("5"),
+    )[0]
+
+
+def test_corrupted_threshold_is_rejected_without_decimal_exceptions() -> None:
+    assert not is_valid_opportunity(
+        market(),
+        result(),
+        min_quantity=Decimal("1"),
+        min_profit=Decimal("NaN"),
         min_roi=Decimal("0"),
         max_quote_age=Decimal("5"),
     )[0]

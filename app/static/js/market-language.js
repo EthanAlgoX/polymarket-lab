@@ -1,7 +1,7 @@
 (() => {
   'use strict';
   const preferenceKey = 'polymarket.market-language';
-  const cacheKey = 'polymarket.market-translations.deepseek-flash.market-zh-v1';
+  const cacheKey = 'polymarket.market-translations.deepseek-flash.market-zh-v2';
   const cache = new Map();
   const esc = value => String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   let language = 'zh', requestRunning = false, scanTimer, pollTimer, persistTimer, providerAvailable = null;
@@ -70,6 +70,12 @@
     });
   }
   function persist() {
+    // Keep long-running refresh sessions bounded without evicting visible or pending text.
+    const visible = new Set(visibleElements().map(sourceOf));
+    for (const [source, entry] of cache) {
+      if (cache.size <= 10000) break;
+      if (!visible.has(source) && entry.status !== 'pending') cache.delete(source);
+    }
     clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
       let size = 0;
