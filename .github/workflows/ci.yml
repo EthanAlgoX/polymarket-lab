@@ -22,7 +22,7 @@ jobs:
       - run: mypy app
       - run: python scripts/security_scan.py
       - run: python -m pytest --cov=app --cov-report=term-missing --cov-report=xml
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         if: matrix.python-version == '3.12'
         with:
           files: coverage.xml
