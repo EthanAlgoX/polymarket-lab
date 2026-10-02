@@ -25,7 +25,9 @@
 
 全新环境按 README 安装开发依赖后，默认测试结果为 **370 passed、1 live deselected、90% coverage，21.54 秒**；Ruff 检查 72 个文件、mypy 检查 26 个源码文件均通过。CLI 专项 13 项回归通过；显式真实网络测试为 **1 passed，5.36 秒**。新环境另执行安全扫描及 pip check 均通过，发布前待提交内容的密钥/运行数据检查通过。这些是本次执行结果，后续版本的文件数与耗时可能变化。
 
-Windows、Docker 未在当前主机运行；Linux 本轮提交的 CI 结果需发布后确认。相关启动文件及依赖平台标记完成源码核对，不能据此宣称这些平台已实机通过。
+发布后又按 README 的 HTTPS 克隆命令下载提交 `92a5c4d`，新建第二套虚拟环境、安装锁定依赖并复制空密钥配置：`pip check`、8130 的健康接口与九个页面均通过，公开请求计数 0；该已发布检出的默认测试再次得到 **370 passed、1 live deselected，22.09 秒**。
+
+Linux 的 GitHub Actions 已对功能提交 `92a5c4d` 完成 Python 3.11 / 3.12 两组离线检查：[CI 通过](https://github.com/EthanAlgoX/polymarket-lab/actions/runs/37047143214)，[CodeQL 通过](https://github.com/EthanAlgoX/polymarket-lab/actions/runs/37047143138)。这验证 Linux 的安装和离线检查，未替代 Linux 真实网络/浏览器启动。Windows、Docker 未实机运行，仅完成启动文件和平台标记核对。
 
 ## A. 全新安装与本地就绪
 
@@ -84,7 +86,7 @@ Windows、Docker 未在当前主机运行；Linux 本轮提交的 CI 结果需�
 | --- | --- | --- |
 | E1 | Node 可用，安装开发依赖后 Ruff/format/mypy/默认 pytest/security_scan 全通过；默认 pytest 不触网、不付费 | **通过，全新环境回归与发布检查。** 默认 370 passed/1 live deselected，覆盖率 90%，21.54s；Node 22.13.1 已执行 10 个前端逻辑用例。Ruff/格式/mypy 与安全扫描通过，待提交内容未发现配置密钥或运行数据泄露。CI 显式安装 Node 22，避免默默跳过前端用例。 |
 | E2 | `python -m pytest -m live -o addopts="" -s tests/live` 实际到达 Gamma/CLOB/地区/Market WS；失败如实记录 | **通过，真实网络。** 全新环境显式执行得到 1 passed，5.36s；Gamma、CLOB、地区检查和 Market WS 真实访问通过。另有 8129 无密钥真实服务启动成功，结果仅表示此次链路正常。 |
-| E3 | macOS/Linux/Windows/Docker 的安装与启动按分别证据标注，不混淆提供脚本与实际成功 | **部分实测，范围已明示。** macOS 全新安装、命令入口和 launcher 重启实际通过。Windows/Docker 仅核对启动文件、锁依赖及 Compose 配置，未运行；Linux 本轮提交的 CI 结果待发布后确认。 |
+| E3 | macOS/Linux/Windows/Docker 的安装与启动按分别证据标注，不混淆提供脚本与实际成功 | **部分实测，范围已明示。** macOS 全新安装、命令入口和 launcher 重启实际通过。Windows/Docker 仅核对启动文件、锁依赖及 Compose 配置，未运行；Linux 功能提交 `92a5c4d` 的 Python 3.11/3.12 CI 均通过；未在 Linux 启动真实行情或浏览器。 |
 
 ## 问题、修复与结论
 
@@ -98,7 +100,7 @@ Windows、Docker 未在当前主机运行；Linux 本轮提交的 CI 结果需�
 | A2/E3 | 容器读取本机 `.env` 时，数据库路径可能绕过命名卷；可选 `.env` 的 Compose 版本要求不清楚 | `Dockerfile`/`docker-compose.yml` 固定容器数据库/绑定地址/端口，保留可选 `.env`，文档注明 Compose ≥2.24 | 配置与平台来源核对通过；Docker 不在当前主机，未宣称构建/运行成功 |
 | A5/B2/C7 | 离线目录持续显示“正在发现”，用户难以区分主动离线与上游尚未就绪 | `app/main.py` 返回 `live_scanner_enabled` / `liveScannerEnabled`；前端显示“本地离线模式 · 未采集公开市场” | 8127 最终源码实测两处开关均 false、请求数 0、页面明确离线 |
 | B1/B6 | 目录将缺失、null 或非法 `closed` 当成未关闭，可能把不明交易状态的市场展示为开盘 | `app/services/catalog.py` 的 `closed` 解析改为未知时默认关闭并排除，不保留旧行 | `tests/unit/test_catalog.py` 的缺失及四类非法值共 5 个回归用例通过 |
-| B11/E1 | CI 没有保证 Node 可用，前端逻辑用例可能被跳过而产生完整验收错觉 | CI 显式安装 Node 22；README 说明 Node 为前端开发验证所需 | 全新 Node 22.13.1 环境执行全部 10 个前端逻辑用例；本轮提交的远端 CI 结果待发布后确认 |
+| B11/E1 | CI 没有保证 Node 可用，前端逻辑用例可能被跳过而产生完整验收错觉 | CI 显式安装 Node 22；README 说明 Node 为前端开发验证所需 | 全新 Node 22.13.1 环境执行全部 10 个前端逻辑用例；功能提交 `92a5c4d` 的两组远端 CI 均通过 |
 | C2/C5/D2 | 自然候选为 0 时，难以按 README 重复验收保存、无效门槛与多页记录 | 新增 `tests/manual/fixture_server.py`，固定隔离端口/临时库、空密钥、无外部请求，提供正候选和 7 个边界市场 | 8128 八详情、一次 UI 保存、审计、七个 409、100+分页及 CSV 全量实机通过；合成价差不用于证明公开市场收益 |
 | A–E | 旧说明缺少首次启动预期、九页操作、零候选判断、参数优先级、升级/审计/翻译/平台范围，用户无法逐步验收 | 重写英文/中文 README，并将步骤映射到本报告 34 项；保留原文搜索、可选翻译、只读边界与上游许可来源 | 全新安装与页面操作按新 README 执行；实际限制逐项记录，无隐藏的必需翻译 key 或交易凭据 |
 
@@ -112,6 +114,6 @@ Windows、Docker 未在当前主机运行；Linux 本轮提交的 CI 结果需�
 
 34 项中，**33 项具有对应实机/API/离线回归通过证据，1 项部分实测（E3）**；这不是“34 项均已在所有平台的浏览器通过”。当前未发现仍未修复的已确认代码缺陷；完整默认测试和显式真实网络测试均通过，真实市场 0 候选属于已核验的正常结果。
 
-剩余范围为 Windows/Docker 实机及本轮提交发布后的 Linux CI；launcher 欠依赖修复已实测，锁哈希变化分支为源码核对。无需为这些未提供的测试平台推迟本地功能使用；报告保留其未覆盖事实。真实翻译费用没有逐请求统计，付费边界来自 mock 回归；合成候选不是获利记录。
+剩余范围为 Windows/Docker 实机及 Linux 真实行情/浏览器启动；launcher 欠依赖修复已实测，锁哈希变化分支为源码核对。无需为这些未提供的测试平台推迟本地功能使用；报告保留其未覆盖事实。真实翻译费用没有逐请求统计，付费边界来自 mock 回归；合成候选不是获利记录。
 
 本轮没有新增必须由用户确认才能修复的需求歧义。实际交易、外部预测、跨平台/跨事件或多结果套利、回测等仍是 README 明确未实现的能力，不能把页面研究说明当作已经具备这些执行功能。
