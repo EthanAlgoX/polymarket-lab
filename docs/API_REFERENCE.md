@@ -1,6 +1,6 @@
 # API reference
 
-Implementation reviewed on **2026-10-03 (Asia/Shanghai)**. This describes the checked-in behavior. Validation results and actual limitations are recorded in [FUNCTIONAL_AUDIT.md](FUNCTIONAL_AUDIT.md). Data comes directly from public Polymarket APIs; no HTML scraping or third-party trading SDK is used.
+Implementation reviewed on **2026-10-03 (Asia/Shanghai)**, including English-first display and user-configurable LLM translation. This describes the checked-in contracts, not an assertion that every provider/platform was tested. Dated validation results are recorded in [FEATURE_EVALUATION.md](FEATURE_EVALUATION.md); [FUNCTIONAL_AUDIT.md](FUNCTIONAL_AUDIT.md) retains the earlier audit. Data comes directly from public Polymarket APIs; no HTML scraping or third-party trading SDK is used.
 
 ## Polymarket data sources
 
@@ -53,6 +53,9 @@ Official schema references: [Gamma list markets](https://docs.polymarket.com/api
 | `GET /api/logs` | Sanitized local events; `limit`: default 100, range 1–500. |
 | `GET /api/research` | Checked-in strategy/reference material; stars are a dated snapshot. |
 | `GET /api/exports/opportunities.csv`, `GET /api/exports/paper-trades.csv` | Complete streamed CSV exports using original text. |
+| `GET /api/llm/config` | Same-origin public translation configuration metadata; never returns credentials. |
+| `PUT /api/llm/config` | Validate/save translation provider/base/model/key, hot-apply without a paid test request; native loopback peer and same-origin required. |
+| `DELETE /api/llm/config` | Remove website settings and restore environment configuration; native loopback peer and same-origin required. |
 | `POST /api/translations` | Queue/retrieve translations of registered public market text; detailed limits below. |
 
 Invalid request parameters return FastAPI validation errors (422). Built-in local schema views are `/docs`, `/redoc`, and `/openapi.json`. The application has no multi-user authorization layer; its launch defaults bind locally.
@@ -97,12 +100,44 @@ CSV exports iterate every saved row in 500-row chunks, regardless of API list li
 
 `/api/system/status.public_http` includes calls, attempts, retries, rate-limited responses, last status, and last retry delay. `scanner_selection` exposes the current selection diagnostics. Live backend polling continues while browser polling pauses in hidden tabs.
 
+## Translation API configuration
+
+`GET /api/llm/config` returns these public fields with `Cache-Control: no-store`; it never returns an API key, masked key or key fragment:
+
+| Field | Values / meaning |
+| --- | --- |
+| `configured` | Boolean: an API key is configured. This does not validate the key, account balance, model availability or compatibility. |
+| `provider` | `deepseek` or `openai-compatible`; default `deepseek`. |
+| `api_base` | Normalized public HTTPS API base; default `https://api.deepseek.com`. |
+| `model` | Model ID; DeepSeek defaults to `deepseek-flash`. |
+| `source` | `local` for saved website settings, `environment` for backend DeepSeek environment/`.env`, or `none`. |
+| `revision` | Opaque public configuration revision for browser cache/response consistency; no credential value or fragment is included. |
+
+`PUT /api/llm/config` requires `Content-Type: application/json` and exactly four string fields:
+
+| Field | Validation |
+| --- | --- |
+| `provider` | `deepseek` or `openai-compatible`. |
+| `api_base` | HTTPS port 443, no user information, query, fragment or whitespace; max 512 characters. DeepSeek permits only `https://api.deepseek.com` or `/v1`. Compatible destinations must use a public host/IP and resolve exclusively to public internet addresses. Supply a base such as `/v1`, not `/chat/completions` or `/models`. |
+| `model` | Nonempty ASCII model ID, max 160 characters; starts with an alphanumeric character and then uses letters/digits or `._:/@+-`. |
+| `api_key` | Printable ASCII without whitespace, max 2048 characters. An empty string retains an existing credential only for the same provider and normalized API base; a new destination requires a new key. |
+
+The total request body is bounded at 8192 bytes. Unknown/missing fields, invalid URLs, unresolved/private hosts or invalid values return a bounded **422** error without echoing submitted values. Wrong content type returns **415**; oversized bodies return **413**. Saving performs local validation and, for compatible hosts, a public DNS check; it does **not** call the paid translation API to test credentials or model compatibility.
+
+Success atomically saves ignored `data/llm-config.json` with Unix mode `0600`, applies the provider immediately, and returns the same public metadata as GET. Settings survive restart and override backend environment settings. The file contains the key and must remain private; it is separate from the scanner SQLite database. Configuration changes cancel old translation workers before switching the destination and retain the public-text whitelist.
+
+`DELETE /api/llm/config` removes the website override, hot-applies any DeepSeek environment/`.env` configuration and returns public metadata. An inherited environment key can therefore leave `configured: true` after removal. Environment aliases are `DEEPSEEK_API_KEY`, `DEEPSEEK_KEY`, and `PMS_DEEPSEEK_API_KEY`; `DEEPSEEK_API_BASE` remains official-host-only. Changes to environment startup values require restart.
+
+Browser requests must come from the website's own origin. PUT/DELETE additionally require both a loopback request host and a loopback client peer; denied configuration requests return **403**. Same-origin GET metadata can be read over a Docker bridge or LAN, enabling Chinese with an already-configured backend API. Docker bridge peers cannot write website credentials: configure DeepSeek in ignored `.env`, then run `docker compose up -d --force-recreate` after changing it. These checks are local-origin guards, not multi-user authentication.
+
+OpenAI-compatible mode supports the **Chat Completions** protocol with JSON output, not arbitrary provider protocols. The backend appends `/chat/completions` to `api_base`, disables redirects and never automatically upgrades the selected model. DeepSeek's default `deepseek-flash` preset disables thinking. Provider acceptance, balance and model limits are checked only when a requested translation reaches that provider; failure retains source text.
+
 ## Display-only translation
 
-`POST /api/translations` accepts `{ "texts": ["..."] }`: 1–80 strings, at most 20000 characters each and 100000 in total. Only public market text already served by the app, supported common outcome labels, or registered lossless segments of long rules may be translated. Responses include `items` with `source`, `text`, and `status` (`ready`, `pending`, or `error`), plus provider/model availability. Poll to retrieve queued results.
+`POST /api/translations` accepts `{ "texts": ["..."] }`: 1–80 strings, at most 20000 characters each and 100000 in total. Only public market text already served by the app, supported common outcome labels, or registered lossless segments of long rules may be translated. Responses include `items` with `source`, `text`, and `status` (`ready`, `pending`, or `error`), plus `provider`, `model`, `available` and `revision`. Poll to retrieve queued results. Without a configured API, even cached translations/common labels retain original text with an error status; arbitrary unregistered strings cannot spend provider credits.
 
-Optional server credentials are read from `DEEPSEEK_API_KEY` (also `DEEPSEEK_KEY` / `PMS_DEEPSEEK_API_KEY`) or an ignored local `.env`. Requests go only to `https://api.deepseek.com/chat/completions` or the official `/v1` equivalent, using `deepseek-flash` (DeepSeek V4.1 Flash), thinking disabled, and JSON output. The bounded worker queue batches requests; successful translations persist in `data/translations.sqlite3`, keyed by model, prompt version, target language, and full source hash. One corrective retry uses the same model.
+The bounded worker queue batches requested visible text. Successful translations persist in `data/translations.sqlite3`, keyed by provider, normalized API base, model, prompt version, target language and full source hash. Validated legacy official Flash translations remain reusable. At most one corrective retry uses the same configured model. Fixed interface/research Chinese copy is bundled and does not call the LLM API.
 
 Validation preserves numeric occurrence counts, protected symbols, URLs, response IDs, and complete batches. Missing credentials, request errors, or failed validation retain original text with an explicit status. Retry is bounded; the browser offers an explicit retry rather than an unlimited paid loop.
 
-The default browser preference is Chinese; English restores original market fields. The switch translates market content, while fixed application controls remain mainly Chinese. Translation never changes source prices, quantities, IDs, outcome/token ordering, rules, or Decimal inputs. Source-language rules remain authoritative; syntax validation cannot establish semantic correctness. Catalog search and CSV exports retain original text.
+The first browser visit defaults to English and does not request market translations. Selecting Chinese first checks configuration metadata; missing configuration retains English and offers **Configure API**. After configuration, the switch changes the complete interface and displayed market text, with original text kept visible while translations are pending or fail. Explicit language choices persist across pages/tabs. Translation never changes source prices, quantities, IDs, outcome/token ordering, rules or Decimal inputs. Source-language rules remain authoritative; syntax validation cannot establish semantic correctness. Catalog search and CSV exports retain original text.

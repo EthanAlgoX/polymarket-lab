@@ -6,9 +6,10 @@ from app.clients.gamma_client import GammaClient
 
 
 @pytest.fixture(autouse=True)
-def public_metadata_fixture(monkeypatch):
+def public_metadata_fixture(monkeypatch, tmp_path):
     # Unit/API tests never spend translation credits or reach public endpoints.
     monkeypatch.setattr("app.main.deepseek_key", lambda: "")
+    monkeypatch.setattr("app.main.LLM_CONFIG_PATH", tmp_path / "llm-config.json")
 
     async def catalog_metadata(self, market_ids):
         from app.main import app

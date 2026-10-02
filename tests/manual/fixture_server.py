@@ -7,10 +7,13 @@ Cases 101..108 cover a positive candidate, unknown fees/minimum size, crossed an
 stale books, a now-closed market, three outcomes, and Up/Down. Forty extra catalog
 rows and 101 preloaded paper/history rows exercise pagination. All databases and
 translation caches are temporary and removed after shutdown.
+API settings use a temporary credential file and an in-process mock translation
+provider. Any ASCII test key can exercise Save/Remove; it never leaves the process.
 """
 
 from __future__ import annotations
 
+# ruff: noqa: RUF001 -- The mock provider intentionally returns natural Chinese punctuation.
 import argparse
 import asyncio
 import hashlib
@@ -25,6 +28,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+import httpx
 import uvicorn
 from fastapi import FastAPI
 
@@ -34,11 +38,14 @@ os.chdir(ROOT)
 # Prevent app.main's normal logger from creating a persistent fixture log file.
 logging.basicConfig(level=logging.INFO)
 
+from app import main as main_module  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.database import OpportunityRow, PaperTradeRow  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Market, OrderBook  # noqa: E402
 from app.runtime import ScannerRuntime  # noqa: E402
+from app.services import translation as translation_module  # noqa: E402
+from app.services.llm_config import LLMConfigStore, LLMConfiguration, normalize_api_base  # noqa: E402
 from app.services.orderbooks import normalize_orderbook  # noqa: E402
 from app.services.translation import DeepSeekTranslator, TranslationService  # noqa: E402
 
@@ -58,6 +65,69 @@ CASE_NAMES = {
     "108": "Up/Down pair, outside Yes/No scanner",
 }
 CASE_CATEGORIES = ("sports", "crypto", "weather", "economy", "politics", "other", "sports", "crypto")
+TEST_TRANSLATIONS = {
+    "Positive complete Yes/No pair": "完整的是/否组合，净收益为正",
+    "Unknown fee schedule": "手续费未知",
+    "Unknown minimum order size": "最小订单数量未知",
+    "Crossed orderbook": "交叉订单簿",
+    "Invalid zero snapshot timestamp": "无效的零快照时间戳",
+    "Catalog open, current Gamma closed": "目录显示开放，当前 Gamma 已关闭",
+    "Three outcomes, descriptive books only": "三个结果，仅展示订单簿",
+    "Up/Down pair, outside Yes/No scanner": "上涨/下跌组合，不属于是/否扫描范围",
+    "Catalog pagination row": "目录分页测试市场",
+    "sports": "体育",
+    "crypto": "加密资产",
+    "weather": "天气",
+    "economy": "经济",
+    "politics": "政治",
+    "other": "其他",
+    "Alpha": "阿尔法",
+    "Beta": "贝塔",
+    "Gamma": "伽马",
+    "A": "甲",
+    "B": "乙",
+    "C": "丙",
+}
+
+
+def fixture_translation(source: str) -> str:
+    if source == RULES:
+        return (
+            "[TEST] 合成公开测试规则：截止时间 2030-12-31 23:59 UTC。"
+            "数值 ≥ 100 时结算为是，否则为否。两个结果合计支付 $1。"
+            "来源 URL https://example.com/test-settlement 。这只是本地测试数据。"
+        )
+    for english, chinese in TEST_TRANSLATIONS.items():
+        if source.endswith(english):
+            return source[: -len(english)] + chinese
+    if source.startswith("[TEST] Event "):
+        return source.replace("[TEST] Event ", "[TEST] 事件 ", 1)
+    return "[TEST] 中文测试数据：" + source
+
+
+def fixture_translator(configuration: LLMConfiguration) -> DeepSeekTranslator:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        sources = json.loads(body["messages"][1]["content"])
+        output = {key: fixture_translation(value) for key, value in sources.items()}
+        return httpx.Response(
+            200,
+            json={"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(output)}}]},
+        )
+
+    return DeepSeekTranslator(
+        configuration.api_key,
+        httpx.AsyncClient(transport=httpx.MockTransport(handler), trust_env=False),
+        configuration.api_base,
+        provider=configuration.provider,
+        model=configuration.model,
+        revision=configuration.revision,
+    )
+
+
+async def fixture_endpoint(provider: str, value: str) -> str:
+    # In this test process ALL provider HTTP is MockTransport; avoid external DNS as well.
+    return normalize_api_base(provider, value)
 
 
 class FixtureRuntime(ScannerRuntime):
@@ -236,10 +306,18 @@ async def fixture_lifespan(application: FastAPI) -> AsyncIterator[None]:
         )
         runtime = FixtureRuntime(settings)
         application.state.runtime = runtime
-        translations = TranslationService(
-            root / "translations.sqlite3", DeepSeekTranslator("", api_base="https://api.deepseek.com")
+        configuration = LLMConfigStore(
+            root / "llm-config.json", env_key=lambda: "", env_base=lambda: "https://api.deepseek.com"
         )
+        application.state.llm_config = configuration
+        translations = TranslationService(root / "translations.sqlite3", fixture_translator(configuration.current))
         application.state.translations = translations
+        original_factory = main_module.configured_translator
+        original_route_validator = main_module.validate_public_endpoint
+        original_provider_validator = translation_module.validate_public_endpoint
+        main_module.configured_translator = fixture_translator
+        main_module.validate_public_endpoint = fixture_endpoint
+        translation_module.validate_public_endpoint = fixture_endpoint
         refresh_task: asyncio.Task[None] | None = None
         try:
             await runtime.start()
@@ -266,6 +344,9 @@ async def fixture_lifespan(application: FastAPI) -> AsyncIterator[None]:
                 await asyncio.gather(refresh_task, return_exceptions=True)
             await translations.close()
             await runtime.stop()
+            main_module.configured_translator = original_factory
+            main_module.validate_public_endpoint = original_route_validator
+            translation_module.validate_public_endpoint = original_provider_validator
 
 
 def main() -> None:

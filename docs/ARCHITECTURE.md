@@ -2,7 +2,7 @@
 
 `ScannerRuntime` owns the shared public Polymarket HTTP clients, `MarketCatalog`, Market WebSocket, in-memory scanner state, and SQLite storage. FastAPI serves the local browser, catalog/inspect APIs, scanner, monitor, records, settings, translation, and exports. The browser contacts the local server rather than Polymarket directly. The scope is public data and simulations; no wallet, signing, order submission, or fund movement exists.
 
-The complete functional walkthrough, fixes, validation evidence, and limits are in [FUNCTIONAL_AUDIT.md](FUNCTIONAL_AUDIT.md). Endpoint contracts are in [API_REFERENCE.md](API_REFERENCE.md).
+The earlier functional walkthrough, fixes, validation evidence, and limits are in [FUNCTIONAL_AUDIT.md](FUNCTIONAL_AUDIT.md); its dated language behavior predates user-configurable providers. Current endpoint contracts are in [API_REFERENCE.md](API_REFERENCE.md), and language setup is in the [README](../README.md#language-and-your-translation-api).
 
 ## Runtime and concurrency
 
@@ -41,6 +41,8 @@ The pure `book_analytics` module provides Decimal liquidity summaries per actual
 
 Five editable Decimal parameters share API/startup validation. SQLite saves the group in one transaction; runtime uses an atomic settings copy and clears results until the next calculation. Other settings remain environment configuration.
 
+`LLMConfigStore` separately manages translation credentials in ignored `data/llm-config.json`, never the scanner database. It loads website overrides before falling back to DeepSeek environment/`.env` settings, saves atomically with owner-only Unix permissions, and exposes only configured/provider/base/model/source/revision metadata. Native loopback same-origin PUT/DELETE updates apply immediately without paid connection tests; Docker bridge peers instead use `.env` and container recreation. Credential reuse is limited to the same provider and normalized API base. Removing an override restores the environment configuration.
+
 Valid signals use fingerprints incorporating full book identity/content and calculation inputs. Each refresh reconciles active/disappeared history; identical inputs may reactivate the same fingerprint. Simulations are independently saved observations, including repeated intentional observations of a candidate. Estimated simulation totals sum SUCCESS records and do not represent realized account profit.
 
 Signal and simulation payloads include audit context: public REST source, as-of time, original market mapping, parameters, and actual two book inputs. List APIs return lightweight summaries; ID detail APIs return full saved audit data. Existing older records may lack the newly captured inputs. No complete market-book archive or automatic history retention job is implemented.
@@ -49,8 +51,10 @@ CSV exports stream all stored rows with stable headers, UTF-8 BOM, and formula-t
 
 ## Translation and provenance
 
-`TranslationService` uses a separate official-host-only DeepSeek client and SQLite cache. Only registered public text can enter bounded workers; common outcome labels can translate locally. Cache identity includes model, prompt version, target language, and source hash. The cheapest configured Flash model uses thinking disabled and one bounded corrective retry. Response validation protects numbers, symbols, URLs, IDs, and batch completeness.
+`TranslationService` uses a separate LLM Chat Completions client and SQLite cache. DeepSeek is restricted to its official host and defaults to `deepseek-flash` with thinking disabled. Compatible providers require public HTTPS port 443 and JSON output; private destinations and redirects are rejected. Only registered public text can enter bounded workers; common outcome labels translate locally only when an API is configured. Cache identity includes provider, API base, model, prompt version, target language and source hash. At most one corrective retry uses the same configured model. Response validation protects numbers, symbols, URLs, IDs and batch completeness.
 
-The browser observes newly visible text, requests translations, and restores original market fields in English mode. Translation affects display only and never changes source data or financial inputs. Failed translation preserves original text with an explicit status; semantic correctness still requires checking original rules.
+Changing configuration cancels old workers before swapping the provider while retaining the public-text whitelist and cache database. Provider/model/base cache isolation prevents reusing another destination's translations; validated legacy official Flash entries remain reusable. Public revisions keep browser responses/cache aligned with the active configuration without including credentials.
+
+The website defaults to English, displaying original market fields without translation requests. `SiteLanguage` localizes project-authored interface/research copy; `MarketLanguage` permits Chinese only after reading configured API metadata, observes newly visible market text, and requests bounded translations. Without a key, Chinese selection keeps English active and links to API settings, even if old browser/cache translations exist. Explicit language preferences persist across pages and tabs. Translation affects display only and never changes source data or financial inputs. Failed translation preserves original text with an explicit status; semantic correctness still requires checking original rules.
 
 Source-level reference/adoption decisions are recorded in [OPEN_SOURCE_REVIEW.md](OPEN_SOURCE_REVIEW.md). No additional third-party trading SDK is integrated. Upstream provenance and retained license are documented in [UPSTREAM.txt](../UPSTREAM.txt).

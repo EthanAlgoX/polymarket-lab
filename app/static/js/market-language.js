@@ -1,17 +1,70 @@
 (() => {
   'use strict';
-  const preferenceKey = 'polymarket.market-language';
-  const cacheKey = 'polymarket.market-translations.deepseek-flash.market-zh-v2';
+  const preferenceKey = 'polymarket.site-language.v2';
+  let cacheKey = null, configuration = null, configurationRequest = null, generation = 0, selection = 0;
   const cache = new Map();
   const esc = value => String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-  let language = 'zh', requestRunning = false, scanTimer, pollTimer, persistTimer, providerAvailable = null;
-  try {
-    if (localStorage.getItem(preferenceKey) === 'en') language = 'en';
-    const saved = JSON.parse(localStorage.getItem(cacheKey) || '[]');
-    if (Array.isArray(saved)) saved.slice(-500).forEach(pair => {
-      if (Array.isArray(pair) && pair.length === 2 && pair.every(text => typeof text === 'string' && text.length <= 20000)) cache.set(pair[0], {status:'ready', text:pair[1]});
-    });
-  } catch { /* Display and translation still work when browser storage is unavailable. */ }
+  const t = (en, zh) => window.SiteLanguage ? window.SiteLanguage.t(en, zh) : en;
+  let language = 'en', requestRunning = false, scanTimer, pollTimer, persistTimer, providerAvailable = null;
+  let savedLanguage = 'en';
+  try { savedLanguage = localStorage.getItem(preferenceKey) === 'zh' ? 'zh' : 'en'; } catch { /* Storage is optional. */ }
+  function changeConfiguration(next) {
+    const nextKey = next.configured && next.revision ? 'polymarket.market-translations.market-zh-v3.' + next.revision : null;
+    const changed = nextKey !== cacheKey;
+    configuration = next;
+    if (next.configured) { const notice = document.querySelector('#language-notice'); if (notice) notice.hidden = true; }
+    window.dispatchEvent(new CustomEvent('llm-configuration-change', {detail:next}));
+    try { localStorage.setItem('polymarket.llm-config.revision', String(next.revision || 'none')); } catch { /* Configuration synchronization is optional. */ }
+    providerAvailable = next.configured === true;
+    if (changed) {
+      generation += 1;
+      clearTimeout(persistTimer);
+      cache.clear();
+      cacheKey = nextKey;
+      if (cacheKey) {
+        try {
+          const saved = JSON.parse(localStorage.getItem(cacheKey) || '[]');
+          if (Array.isArray(saved)) saved.slice(-500).forEach(pair => {
+            if (Array.isArray(pair) && pair.length === 2 && pair.every(text => typeof text === 'string' && text.length <= 20000)) cache.set(pair[0], {status:'ready', text:pair[1]});
+          });
+        } catch { /* Persistent backend translations remain available. */ }
+      }
+    }
+    if (!providerAvailable && language === 'zh') applyLanguage('en');
+    document.querySelectorAll('[data-market-text]').forEach(apply);
+    updateControls();
+    scheduleScan(0);
+    return next;
+  }
+  async function loadConfiguration(force = false) {
+    if (force && configurationRequest) {
+      try { await configurationRequest; } catch { /* A new read follows the pending request. */ }
+    }
+    if (configurationRequest) return configurationRequest;
+    const configurationGeneration = generation;
+    configurationRequest = (async () => {
+      const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 10000);
+      try {
+        const response = await fetch('/api/llm/config', {cache:'no-store', signal:controller.signal});
+        if (!response.ok) throw new Error('Configuration unavailable');
+        const result = await response.json();
+        if (configurationGeneration !== generation && configuration) return configuration;
+        if (typeof result.configured !== 'boolean') throw new Error('Invalid configuration');
+        return changeConfiguration(result);
+      } catch (error) {
+        if (configurationGeneration !== generation && configuration) return configuration;
+        throw error;
+      } finally { clearTimeout(timeout); }
+    })();
+    try { return await configurationRequest; } finally { configurationRequest = null; }
+  }
+  function showConfigurationNotice(unavailable = false) {
+    const notice = document.querySelector('#language-notice');
+    if (!notice) return;
+    notice.hidden = false;
+    document.querySelector('#language-notice-title').textContent = unavailable ? 'Unable to check your LLM API configuration' : 'Configure an LLM API to use Chinese';
+    document.querySelector('#language-notice-text').textContent = unavailable ? 'Check the local server connection, then try again. API settings are available in Settings.' : 'Add your own API key in Settings. English market data works without a key.';
+  }
 
   const sourceOf = element => {
     try { return decodeURIComponent(element.dataset.marketSource || ''); } catch { return element.dataset.marketSource || ''; }
@@ -59,14 +112,14 @@
     const sources = [...new Set(elements.map(sourceOf).filter(needsTranslation))];
     const errors = sources.filter(source => cache.get(source)?.status === 'error');
     const pending = sources.filter(source => !cache.has(source) || cache.get(source).status === 'pending');
-    let message = sources.length ? '已显示中文' : '中文模式';
-    if (language === 'en') message = '显示英文原文';
-    else if (providerAvailable === false && (errors.length || pending.length)) message = '中文翻译未接通 · 暂显原文';
-    else if (errors.length) message = pending.length ? `翻译中 · ${errors.length} 条暂显原文` : '部分翻译不可用 · 保留原文';
-    else if (pending.length) message = providerAvailable === false ? '中文翻译准备中 · 暂显原文' : `正在翻译 · ${pending.length} 条待完成`;
+    let message = sources.length ? t('Chinese market text', '已显示中文') : t('Chinese interface', '中文模式');
+    if (language === 'en') message = 'English · Original market text';
+    else if (providerAvailable === false) message = t('Configure an LLM API first', '请先配置 LLM API');
+    else if (errors.length) message = pending.length ? t(`Translating · ${errors.length} originals retained`, `翻译中 · ${errors.length} 条暂显原文`) : t('Some translations unavailable · Originals retained', '部分翻译不可用 · 保留原文');
+    else if (pending.length) message = t(`Translating · ${pending.length} pending`, `正在翻译 · ${pending.length} 条待完成`);
     document.querySelectorAll('[data-market-language-status]').forEach(element => {
       if (element.textContent !== message) element.textContent = message;
-      element.title = language === 'zh' && errors.length ? `${cache.get(errors[0])?.reason || '翻译暂时不可用'}。稍后点击中文或刷新数据重试。` : '';
+      element.title = language === 'zh' && errors.length ? `${window.SiteLanguage?.message(cache.get(errors[0])?.reason || 'Translation unavailable') || 'Translation unavailable'} ${t('Click Chinese or Refresh to retry shortly.', '稍后点击中文或刷新数据重试。')}` : '';
     });
   }
   function persist() {
@@ -83,7 +136,7 @@
         size += source.length + entry.text.length;
         return size <= 450000;
       }).slice(0, 400).map(([source, entry]) => [source, entry.text]).reverse();
-      try { localStorage.setItem(cacheKey, JSON.stringify(ready)); } catch { /* The backend also caches completed translations. */ }
+      try { if (cacheKey && providerAvailable) localStorage.setItem(cacheKey, JSON.stringify(ready)); } catch { /* The backend also caches completed translations. */ }
     }, 150);
   }
   function scheduleScan(delay = 60) {
@@ -100,7 +153,7 @@
     const elements = visibleElements();
     elements.forEach(apply);
     updateControls(elements);
-    if (language !== 'zh') { clearTimeout(pollTimer); return; }
+    if (language !== 'zh' || !providerAvailable) { clearTimeout(pollTimer); return; }
     if (requestRunning) return;
     const now = Date.now();
     const sources = [...new Set(elements.map(sourceOf).filter(needsTranslation))];
@@ -110,7 +163,7 @@
       const entry = cache.get(source);
       if (entry?.status === 'ready' || entry?.status === 'error' || (entry?.retryAt || 0) > now) continue;
       if (entry?.pendingSince && now - entry.pendingSince > 600000) {
-        cache.set(source, {status:'error', reason:'翻译等待超时', retryAt:now + 30000});
+        cache.set(source, {status:'error', reason:'Translation timed out', retryAt:now + 30000});
         continue;
       }
       if (request.length >= 80 || characters + source.length > 90000) break;
@@ -120,12 +173,22 @@
     }
     if (!request.length) { updateControls(elements); armPoll(elements); return; }
     requestRunning = true;
+    const requestGeneration = generation;
     const abort = new AbortController();
     const timeout = setTimeout(() => abort.abort(), 20000);
     try {
       const response = await fetch('/api/translations', {method:'POST', headers:{'Accept':'application/json','Content-Type':'application/json'}, body:JSON.stringify({texts:request}), signal:abort.signal});
-      if (!response.ok) throw new Error(`翻译服务请求失败（${response.status}）`);
+      if (!response.ok) throw new Error(`Translation request failed (${response.status})`);
       const result = await response.json();
+      if (requestGeneration !== generation) return;
+      if (result.available === false) {
+        // A hot configuration update briefly pauses workers; confirm the key before
+        // treating that pause as a missing configuration.
+        const next = await loadConfiguration();
+        if (!next.configured) showConfigurationNotice();
+        return;
+      }
+      if (result.revision && result.revision !== configuration?.revision) { await loadConfiguration(); return; }
       providerAvailable = result.available;
       const items = new Map((Array.isArray(result.items) ? result.items : []).filter(item => item && request.includes(item.source)).map(item => [item.source, item]));
       request.forEach(source => {
@@ -136,12 +199,13 @@
         } else if (item?.status === 'pending') {
           cache.set(source, {status:'pending', pendingSince:previous.pendingSince, retryAt:Date.now() + 1100});
         } else {
-          cache.set(source, {status:'error', reason:item?.reason || '翻译服务未返回有效译文', retryAt:Date.now() + 30000});
+          cache.set(source, {status:'error', reason:item?.reason || 'No valid translation was returned', retryAt:Date.now() + 30000});
         }
       });
       persist();
     } catch (error) {
-      request.forEach(source => cache.set(source, {status:'error', reason:error.name === 'AbortError' ? '翻译服务响应超时' : error.message, retryAt:Date.now() + 30000}));
+      if (requestGeneration !== generation) return;
+      request.forEach(source => cache.set(source, {status:'error', reason:error.name === 'AbortError' ? 'Translation timed out' : error.message, retryAt:Date.now() + 30000}));
     } finally {
       clearTimeout(timeout);
       requestRunning = false;
@@ -154,17 +218,36 @@
     const now = Date.now();
     cache.forEach((entry, source) => { if (entry.status === 'error' && (entry.retryAt || 0) <= now) cache.delete(source); });
   }
-  function setLanguage(value) {
-    if (!['zh', 'en'].includes(value)) return;
-    language = value;
-    try { localStorage.setItem(preferenceKey, value); } catch { /* Preference remains active for this page. */ }
+  function applyLanguage(value) {
+    language = value === 'zh' ? 'zh' : 'en';
+    try { localStorage.setItem(preferenceKey, language); } catch { /* Session-only preference. */ }
+    window.SiteLanguage?.setLanguage(language);
     retryFailed();
-    // Restore even text in a collapsed rules section immediately on a language switch.
     document.querySelectorAll('[data-market-text]').forEach(apply);
     updateControls();
     scheduleScan(0);
   }
-  window.MarketLanguage = {html, setLanguage, refresh:() => {retryFailed(); scheduleScan(0);}, getLanguage:() => language};
+  async function setLanguage(value) {
+    const intent = ++selection;
+    if (value !== 'zh') { applyLanguage('en'); return true; }
+    try {
+      const next = await loadConfiguration();
+      if (intent !== selection) return false;
+      if (!next.configured) { applyLanguage('en'); showConfigurationNotice(); return false; }
+      const notice = document.querySelector('#language-notice');
+      if (notice) notice.hidden = true;
+      applyLanguage('zh');
+      return true;
+    } catch {
+      if (intent !== selection) return false;
+      providerAvailable = false;
+      applyLanguage('en');
+      showConfigurationNotice(true);
+      return false;
+    }
+  }
+  window.MarketLanguage = {html, setLanguage, refresh:() => scheduleScan(), getLanguage:() => language, getConfiguration:loadConfiguration, configurationChanged:changeConfiguration};
+
   document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('click', event => {
       const button = event.target.closest('[data-market-language]');
@@ -175,8 +258,14 @@
     new MutationObserver(records => {
       if (records.some(record => record.type === 'attributes' || [...record.addedNodes].some(node => node.nodeType === 1 && (node.matches?.('[data-market-text]') || node.querySelector?.('[data-market-text]'))))) scheduleScan();
     }).observe(document.body, {childList:true, subtree:true, attributes:true, attributeFilter:['hidden']});
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleScan(); });
-    window.addEventListener('storage', event => { if (event.key === preferenceKey && ['zh','en'].includes(event.newValue)) setLanguage(event.newValue); });
-    scheduleScan(0);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { scheduleScan(); if (language === 'zh' || document.querySelector('#llm-settings-form')) loadConfiguration().catch(() => {}); } });
+    setInterval(() => { if ((language === 'zh' || document.querySelector('#llm-settings-form')) && !document.hidden) loadConfiguration().catch(() => {}); }, 30000);
+    document.querySelector('#dismiss-language-notice')?.addEventListener('click', () => { document.querySelector('#language-notice').hidden = true; });
+    window.addEventListener('storage', event => {
+      if (event.key === preferenceKey && ['zh','en'].includes(event.newValue)) setLanguage(event.newValue);
+      if (event.key === 'polymarket.llm-config.revision' && event.newValue !== configuration?.revision && (language === 'zh' || document.querySelector('#llm-settings-form'))) loadConfiguration().catch(() => {});
+    });
+    if (savedLanguage === 'zh') setLanguage('zh');
+    else { updateControls(); scheduleScan(0); }
   });
 })();

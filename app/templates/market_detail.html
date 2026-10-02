@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}盘口深度核验{% endblock %}
+{% block title %}<span data-i18n-en="Depth verification" data-i18n-zh="盘口深度核验">Depth verification</span>{% endblock %}
 {% block content %}
-<section id="market-summary" class="panel market-summary"><div class="empty">正在读取市场规则与盘口…</div></section>
-<p class="translation-note">中文为机器翻译，结算以英文原文为准。切换 English 可查看原文。</p>
+<section id="market-summary" class="panel market-summary"><div class="empty"><span data-i18n-en="Loading market rules and order books…" data-i18n-zh="正在读取市场规则与盘口…">Loading market rules and order books…</span></div></section>
+<p class="translation-note"><span data-i18n-en="Chinese market text is machine translated. Use the original English settlement rules as the source of truth." data-i18n-zh="中文为机器翻译，结算以英文原文为准。切换 English 可查看原文。">Chinese market text is machine translated. Use the original English settlement rules as the source of truth.</span></p>
 <div id="book-analytics"></div>
-<div class="depth-layout"><section class="grid two"><article class="panel"><h2><span class="market-text" data-market-text data-market-source="Yes" title="Yes" translate="no">Yes</span> 卖盘深度</h2><div id="yes-book"></div></article><article class="panel"><h2><span class="market-text" data-market-text data-market-source="No" title="No" translate="no">No</span> 卖盘深度</h2><div id="no-book"></div></article></section><section class="panel calculation-panel"><h2>共同数量的成本核算</h2><div id="calculation"></div></section></div>
+<div class="depth-layout"><section class="grid two"><article class="panel"><h2><span class="market-text" data-market-text data-market-source="Yes" title="Yes" translate="no">Yes</span><span data-i18n-en=" ask depth" data-i18n-zh="卖盘深度"> ask depth</span></h2><div id="yes-book"></div></article><article class="panel"><h2><span class="market-text" data-market-text data-market-source="No" title="No" translate="no">No</span><span data-i18n-en=" ask depth" data-i18n-zh="卖盘深度"> ask depth</span></h2><div id="no-book"></div></article></section><section class="panel calculation-panel"><h2><span data-i18n-en="Costs at the common quantity" data-i18n-zh="共同数量的成本核算">Costs at the common quantity</span></h2><div id="calculation"></div></section></div>
 {% endblock %}

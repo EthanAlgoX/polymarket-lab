@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 
 import httpx
 import pytest
 
-from app.services.translation import MODEL, DeepSeekTranslator, TranslationFailure, TranslationService, source_chunks
+from app.services.translation import (
+    MODEL,
+    PROMPT_VERSION,
+    DeepSeekTranslator,
+    TranslationFailure,
+    TranslationService,
+    source_chunks,
+)
 
 
 def response_json(output: dict[str, str], finish: str = "stop") -> dict:
@@ -170,13 +178,13 @@ async def test_only_served_public_fields_are_allowed_and_missing_key_is_honest(t
         assert result["items"][0]["status"] == "error"
         assert result["items"][0]["text"] == "New public market?"
         assert result["items"][1]["status"] == "error"
-        assert result["items"][2]["text"] == "是"
+        assert result["items"][2]["text"] == "Yes"
         assert not service.pending
         long_rules = "Public rules 2026.\n" * 1200
         service.register({"description": long_rules})
-        assert "后端" in service.resolve([source_chunks(long_rules)[0]])["items"][0]["reason"]
-        assert "只能翻译" in service.resolve([long_rules[:18000]])["items"][0]["reason"]
-        assert "只能翻译" in service.resolve(["unknown nonpublic source"])["items"][0]["reason"]
+        assert "Configure your LLM API" in service.resolve([source_chunks(long_rules)[0]])["items"][0]["reason"]
+        assert "Only public market text" in service.resolve([long_rules[:18000]])["items"][0]["reason"]
+        assert "Only public market text" in service.resolve(["unknown nonpublic source"])["items"][0]["reason"]
     finally:
         await service.close()
 
@@ -233,7 +241,7 @@ async def test_malformed_provider_port_is_sanitized_without_a_network_request() 
         api_base="https://api.deepseek.com:secret-value",
     )
     try:
-        with pytest.raises(TranslationFailure, match="官方 HTTPS") as exc:
+        with pytest.raises(TranslationFailure, match="public HTTPS") as exc:
             await provider.translate(["Public market?"])
         assert "secret-value" not in str(exc.value)
     finally:
@@ -250,8 +258,8 @@ async def test_rule_chunks_are_lossless_and_arbitrary_substrings_cannot_spend_cr
         assert "".join(parts) == source
         assert all(len(part.encode("utf-16-le")) <= 36002 for part in parts)
         service.register({"description": source})
-        assert all("后端" in item["reason"] for item in service.resolve(parts)["items"])
-        assert "只能翻译" in service.resolve(["Source rules 2026."])["items"][0]["reason"]
+        assert all("Configure your LLM API" in item["reason"] for item in service.resolve(parts)["items"])
+        assert "Only public market text" in service.resolve(["Source rules 2026."])["items"][0]["reason"]
         assert not service.pending
     finally:
         await service.close()
@@ -281,5 +289,150 @@ async def test_provider_error_keeps_original_and_is_not_retried_in_a_loop(tmp_pa
         service.resolve(["A public market?"])
         assert len(calls) == 1
         assert service.cached("A public market?") is None
+    finally:
+        await service.close()
+
+
+async def test_compatible_api_uses_chosen_model_and_no_deepseek_specific_options(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.llm_config.socket.getaddrinfo", lambda *args, **kwargs: [(2, 1, 6, "", ("8.8.8.8", 443))]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "https://api.example.com/v1/chat/completions"
+        assert request.headers["Authorization"] == "Bearer fixture-key"
+        body = json.loads(request.content)
+        assert body["model"] == "user-selected-model"
+        assert "thinking" not in body
+        assert "fixture-key" not in json.dumps(body)
+        return httpx.Response(200, json=response_json({"0": "公开市场?"}))
+
+    provider = DeepSeekTranslator(
+        "fixture-key",
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        "https://api.example.com/v1",
+        provider="openai-compatible",
+        model="user-selected-model",
+    )
+    try:
+        assert await provider.translate(["Public market?"]) == ["公开市场?"]
+    finally:
+        await provider.close()
+
+
+async def test_provider_redirects_never_forward_credentials_even_when_client_follows() -> None:
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(307, headers={"Location": "https://attacker.example.com"})
+
+    provider = DeepSeekTranslator(
+        "fixture-key", httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True)
+    )
+    try:
+        with pytest.raises(TranslationFailure, match="temporarily unavailable"):
+            await provider.translate(["Public market?"])
+        assert calls == ["https://api.deepseek.com/chat/completions"]
+    finally:
+        await provider.close()
+
+
+async def test_custom_dns_recheck_blocks_credentials_if_host_becomes_private(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.llm_config.socket.getaddrinfo", lambda *args, **kwargs: [(2, 1, 6, "", ("127.0.0.1", 443))]
+    )
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        pytest.fail("The API key must never be sent to a private destination")
+
+    provider = DeepSeekTranslator(
+        "fixture-key",
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        "https://api.example.com/v1",
+        provider="openai-compatible",
+    )
+    try:
+        with pytest.raises(TranslationFailure, match="public internet"):
+            await provider.translate(["Public market?"])
+    finally:
+        await provider.close()
+
+
+async def test_reconfiguration_cancels_paid_work_and_keeps_registry_with_model_scoped_cache(tmp_path: Path) -> None:
+    started = asyncio.Event()
+    canceled = asyncio.Event()
+
+    async def waiting_handler(_: httpx.Request) -> httpx.Response:
+        started.set()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            canceled.set()
+            raise
+        pytest.fail("Old provider work must be canceled before it completes")
+
+    first_client = httpx.AsyncClient(transport=httpx.MockTransport(waiting_handler))
+    service = TranslationService(tmp_path / "cache.sqlite3", DeepSeekTranslator("key-1", first_client))
+    await service.start()
+    source = "A public market?"
+    service.register({"question": source})
+    old_cache_key = service.cache_key(source)
+    try:
+        service.resolve([source])
+        await asyncio.wait_for(started.wait(), 2)
+        service.database.execute(
+            "INSERT OR REPLACE INTO translations VALUES (?, ?, ?, ?)", (old_cache_key, source, "旧译文", 1)
+        )
+        service.database.commit()
+        next_provider = DeepSeekTranslator(
+            "key-2",
+            httpx.AsyncClient(
+                transport=httpx.MockTransport(lambda _: httpx.Response(200, json=response_json({"0": "新的公开市场?"})))
+            ),
+            model="configured-model-2",
+            revision="revision-2",
+        )
+        await asyncio.wait_for(service.reconfigure(next_provider), 2)
+        assert canceled.is_set()
+        assert first_client.is_closed
+        assert source in service.registered
+        assert not service.pending
+        assert service.cache_key(source) != old_cache_key
+        assert service.cached(source) is None
+        pending = service.resolve([source])
+        assert pending["model"] == "configured-model-2"
+        assert pending["revision"] == "revision-2"
+        assert pending["items"][0]["status"] == "pending"
+        await asyncio.wait_for(service.queue.join(), 2)
+        assert service.resolve([source])["items"][0]["text"] == "新的公开市场?"
+        second_cache_key = service.cache_key(source)
+        for overrides in (
+            {"api_base": "https://api.deepseek.com/v1"},
+            {"provider": "openai-compatible", "api_base": "https://api.example.com/v1"},
+        ):
+            await service.reconfigure(DeepSeekTranslator("key-3", model="configured-model-2", **overrides))
+            assert service.cache_key(source) != second_cache_key
+            assert service.cached(source) is None
+    finally:
+        await service.close()
+
+
+async def test_pre_configuration_flash_cache_is_reused_only_for_the_official_default_model(tmp_path: Path) -> None:
+    service = TranslationService(tmp_path / "cache.sqlite3", DeepSeekTranslator("fixture-key"))
+    await service.start()
+    source = "A public market?"
+    service.register({"question": source})
+    legacy_key = hashlib.sha256(f"{MODEL}|{PROMPT_VERSION}|zh-CN|{source}".encode()).hexdigest()
+    try:
+        service.database.execute("INSERT INTO translations VALUES (?, ?, ?, ?)", (legacy_key, source, "公开市场?", 1))
+        service.database.commit()
+        assert service.resolve([source])["items"][0]["text"] == "公开市场?"
+        assert not service.pending
+        await service.reconfigure(DeepSeekTranslator("fixture-key", model="other-model"))
+        assert service.cached(source) is None
+        await service.reconfigure(DeepSeekTranslator(""))
+        assert service.resolve([source])["items"][0]["text"] == source
+        assert not service.pending
     finally:
         await service.close()

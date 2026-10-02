@@ -14,10 +14,11 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from threading import RLock
 from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
 from dotenv import dotenv_values
+
+from app.services.llm_config import ConfigurationFailure, validate_public_endpoint
 
 # Cheapest model in DeepSeek's official API price table (verified 2026-10-02).
 # Keep all translation and corrective requests on Flash, with thinking disabled.
@@ -49,7 +50,7 @@ class TranslationFailure(Exception):
 
 
 def deepseek_key() -> str:
-    """Read only explicitly named translation credentials; never expose or persist them."""
+    """Read the legacy environment credentials, without exposing their values."""
     names = ("DEEPSEEK_API_KEY", "DEEPSEEK_KEY", "PMS_DEEPSEEK_API_KEY")
     for name in names:
         if value := os.environ.get(name, "").strip():
@@ -110,10 +111,24 @@ def protected_terms(text: str) -> Counter:
 
 
 class DeepSeekTranslator:
-    def __init__(self, api_key: str, client: httpx.AsyncClient | None = None, api_base: str | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        client: httpx.AsyncClient | None = None,
+        api_base: str | None = None,
+        *,
+        provider: str = "deepseek",
+        model: str = MODEL,
+        revision: str = "",
+    ) -> None:
         self.api_key = api_key
         self.api_base = api_base or deepseek_api_base()
-        self.client = client or httpx.AsyncClient(timeout=httpx.Timeout(90, connect=10), follow_redirects=False)
+        self.provider = provider
+        self.model = model
+        self.revision = revision
+        self.client = client or httpx.AsyncClient(
+            timeout=httpx.Timeout(90, connect=10), follow_redirects=False, trust_env=False
+        )
 
     @property
     def available(self) -> bool:
@@ -126,50 +141,41 @@ class DeepSeekTranslator:
         self, texts: list[str], *, tolerate_partial: bool = False, corrective: bool = False
     ) -> list[str | TranslationFailure]:
         if not self.available:
-            raise TranslationFailure("后端尚未读取到 DeepSeek API 环境变量")
+            raise TranslationFailure("Configure your LLM API in Settings before switching to Chinese.")
         try:
-            endpoint = urlsplit(self.api_base)
-            valid_endpoint = (
-                endpoint.scheme == "https"
-                and endpoint.hostname == "api.deepseek.com"
-                and endpoint.path in {"", "/v1"}
-                and not endpoint.query
-                and not endpoint.fragment
-                and not endpoint.username
-                and not endpoint.password
-                and endpoint.port in {None, 443}
-            )
-        except ValueError:
-            valid_endpoint = False
-        if not valid_endpoint:
-            raise TranslationFailure("DeepSeek API 地址配置无效，请使用官方 HTTPS 地址")
+            api_base = await validate_public_endpoint(self.provider, self.api_base)
+        except ConfigurationFailure as exc:
+            raise TranslationFailure(str(exc)) from None
+        body = {
+            "model": self.model,
+            "temperature": 0,
+            "stream": False,
+            "response_format": {"type": "json_object"},
+            "max_tokens": 16000,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT + (CORRECTIVE_PROMPT if corrective else "")},
+                {"role": "user", "content": json.dumps(dict(enumerate(texts)), ensure_ascii=False)},
+            ],
+        }
+        if self.provider == "deepseek":
+            body["thinking"] = {"type": "disabled"}
         try:
             response = await self.client.post(
-                f"{self.api_base}/chat/completions",
+                f"{api_base}/chat/completions",
                 headers={"Authorization": f"Bearer {self.api_key}"},
-                json={
-                    "model": MODEL,
-                    "thinking": {"type": "disabled"},
-                    "temperature": 0,
-                    "stream": False,
-                    "response_format": {"type": "json_object"},
-                    "max_tokens": 16000,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT + (CORRECTIVE_PROMPT if corrective else "")},
-                        {"role": "user", "content": json.dumps(dict(enumerate(texts)), ensure_ascii=False)},
-                    ],
-                },
+                json=body,
+                follow_redirects=False,
             )
-        except httpx.HTTPError as exc:
-            raise TranslationFailure("DeepSeek 暂时无法连接，请稍后重试") from exc
+        except httpx.HTTPError:
+            raise TranslationFailure("The translation API could not be reached. Try again later.") from None
         if response.status_code in {401, 403}:
-            raise TranslationFailure("DeepSeek 授权失败，请检查后端环境变量")
+            raise TranslationFailure("The translation API rejected the credentials. Check the API key in Settings.")
         if response.status_code == 402:
-            raise TranslationFailure("DeepSeek 账户余额不足")
+            raise TranslationFailure("The translation API account has insufficient credit.")
         if response.status_code == 429:
-            raise TranslationFailure("DeepSeek 请求暂时受限，请稍后重试")
+            raise TranslationFailure("The translation API is rate limited. Try again later.")
         if response.status_code != 200:
-            raise TranslationFailure("DeepSeek 翻译服务暂时不可用")
+            raise TranslationFailure("The translation API is temporarily unavailable.")
         try:
             choice = response.json()["choices"][0]
             if choice.get("finish_reason") != "stop":
@@ -194,10 +200,16 @@ class DeepSeekTranslator:
                 except ValueError:
                     if not tolerate_partial:
                         raise
-                    translated.append(TranslationFailure("译文未通过完整性检查，请重试或查看英文原文"))
+                    translated.append(
+                        TranslationFailure(
+                            "Translation failed its integrity check. Retry or view the English original."
+                        )
+                    )
             return translated
         except (ValueError, KeyError, IndexError, TypeError) as exc:
-            raise TranslationFailure("译文未通过完整性检查，请重试或查看英文原文") from exc
+            raise TranslationFailure(
+                "Translation failed its integrity check. Retry or view the English original."
+            ) from exc
 
 
 class TranslationService:
@@ -213,6 +225,7 @@ class TranslationService:
         self.registered: OrderedDict[str, None] = OrderedDict()
         self.registry_lock = RLock()
         self.tasks: list[asyncio.Task[None]] = []
+        self.reconfiguring = False
 
     async def start(self) -> None:
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -233,9 +246,29 @@ class TranslationService:
             self.database.close()
             self.database = None
 
-    @staticmethod
-    def cache_key(source: str) -> str:
-        return hashlib.sha256(f"{MODEL}|{PROMPT_VERSION}|zh-CN|{source}".encode()).hexdigest()
+    def cache_key(self, source: str) -> str:
+        identity = f"{self.provider.provider}|{self.provider.api_base}|{self.provider.model}"
+        return hashlib.sha256(f"{identity}|{PROMPT_VERSION}|zh-CN|{source}".encode()).hexdigest()
+
+    @property
+    def available(self) -> bool:
+        return self.provider.available and not self.reconfiguring
+
+    async def reconfigure(self, provider: DeepSeekTranslator) -> None:
+        """Cancel old paid work before changing destination; retain the public-text registry and database."""
+        self.reconfiguring = True
+        try:
+            for task in self.tasks:
+                task.cancel()
+            await asyncio.gather(*self.tasks, return_exceptions=True)
+            await self.provider.close()
+            self.provider = provider
+            self.queue = asyncio.Queue(maxsize=2000)
+            self.pending.clear()
+            self.errors.clear()
+            self.tasks = [asyncio.create_task(self._worker(), name=f"market-translation-{i}") for i in range(2)]
+        finally:
+            self.reconfiguring = False
 
     def register(self, payload: Any, field: str | None = None) -> None:
         """Only market text actually served by our public-data APIs can spend API credits."""
@@ -261,6 +294,16 @@ class TranslationService:
             "SELECT translation FROM translations WHERE cache_key = ? AND source = ?",
             (self.cache_key(source), source),
         ).fetchone()
+        if row is None and (
+            self.provider.provider == "deepseek"
+            and self.provider.model == MODEL
+            and self.provider.api_base in {"https://api.deepseek.com", "https://api.deepseek.com/v1"}
+        ):
+            # Reuse validated Flash translations from versions before user-configurable providers.
+            legacy_key = hashlib.sha256(f"{MODEL}|{PROMPT_VERSION}|zh-CN|{source}".encode()).hexdigest()
+            row = self.database.execute(
+                "SELECT translation FROM translations WHERE cache_key = ? AND source = ?", (legacy_key, source)
+            ).fetchone()
         return row[0] if row else None
 
     def resolve(self, texts: list[str]) -> dict[str, Any]:
@@ -271,13 +314,16 @@ class TranslationService:
             with self.registry_lock:
                 allowed = source in self.registered or source in COMMON
             if not allowed:
-                item.update(status="error", reason="只能翻译已展示的公开市场文本")
+                item.update(
+                    status="error",
+                    reason="Only public market text already displayed by this application can be translated.",
+                )
+            elif not self.available:
+                item.update(status="error", reason="Configure your LLM API in Settings before switching to Chinese.")
             elif source in COMMON or not re.search(r"[A-Za-z]", source):
                 item.update(status="ready", text=COMMON.get(source, source))
             elif cached := self.cached(source):
                 item.update(status="ready", text=cached)
-            elif not self.provider.available:
-                item.update(status="error", reason="后端尚未读取到 DeepSeek API 环境变量")
             elif source in self.errors and time.monotonic() - self.errors[source][0] < 60:
                 item.update(status="error", reason=self.errors[source][1])
             elif source not in self.pending:
@@ -286,9 +332,15 @@ class TranslationService:
                     self.pending.add(source)
                     self.errors.pop(source, None)
                 except asyncio.QueueFull:
-                    item.update(status="error", reason="翻译队列繁忙，请稍后重试")
+                    item.update(status="error", reason="The translation queue is full. Try again later.")
             items.append(item)
-        return {"items": items, "provider": "deepseek", "model": MODEL, "available": self.provider.available}
+        return {
+            "items": items,
+            "provider": self.provider.provider,
+            "model": self.provider.model,
+            "available": self.available,
+            "revision": self.provider.revision,
+        }
 
     def _record_error(self, source: str, reason: str) -> None:
         self.errors[source] = (time.monotonic(), reason)
@@ -317,7 +369,7 @@ class TranslationService:
             try:
                 translated = await self.provider.translate(sources, tolerate_partial=True)
                 if len(translated) != len(sources):
-                    raise TranslationFailure("翻译返回不完整，请稍后重试")
+                    raise TranslationFailure("The translation response was incomplete. Try again later.")
                 failed = [i for i, value in enumerate(translated) if isinstance(value, TranslationFailure)]
                 if failed:
                     # One targeted corrective attempt; never create an unbounded paid retry loop.
@@ -346,7 +398,7 @@ class TranslationService:
                     self._record_error(source, str(exc))
             except Exception:
                 for source in sources:
-                    self._record_error(source, "翻译暂时不可用，请稍后重试")
+                    self._record_error(source, "Translation is temporarily unavailable. Try again later.")
             finally:
                 for source in sources:
                     self.pending.discard(source)

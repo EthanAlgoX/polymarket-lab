@@ -25,6 +25,7 @@ NODE = shutil.which("node")
         "settingSaveIsSingleAndHonest",
         "verifiedScannerMix",
         "unavailableMarketStopsDetail",
+        "bilingualContent",
     ],
 )
 def test_frontend_request_and_record_logic(case: str) -> None:

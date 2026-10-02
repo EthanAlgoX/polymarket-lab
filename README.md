@@ -1,16 +1,20 @@
 # Polymarket Lab
 
-**中文使用指南：[README_CN.md](README_CN.md)** · [Feature evaluation / 功能评测](docs/FEATURE_EVALUATION.md)
+**[English](README.md) · [简体中文](README_CN.md)**
 
 A local, public-data-only Polymarket research workspace: browse open markets by category, inspect actual outcome books, estimate two-outcome complete-set costs, and observe a bounded scanner. It reads official Gamma, CLOB, and Market WebSocket APIs directly. No website scraping, wallet connection, signing, orders, transfers, holdings, or realized account profit is implemented.
+
+The website starts in **English**. To use Chinese, configure your own translation API in **Settings → Translation API**, then choose **中文**. Docker uses backend `.env` configuration instead. If no API key is configured, the site stays in English and offers a configuration link. The Chinese README is maintained alongside this file and can be read without any API key.
 
 **An estimate is not a fill.** Mathematical `VALID`, positive estimated difference, and passing every current scanner gate are separate results. Zero candidates can be a healthy outcome. Sports/weather/crypto strategy pages and high-star repositories are dated research references; they do not provide validated predictions or guaranteed income.
 
 Follow the A–E acceptance stages below. [FEATURE_EVALUATION.md](docs/FEATURE_EVALUATION.md) records actual execution evidence separately from mocked/synthetic cases and untested platforms. Detailed contracts: [API](docs/API_REFERENCE.md), [calculation](docs/CALCULATION.md), [architecture](docs/ARCHITECTURE.md), [functional audit](docs/FUNCTIONAL_AUDIT.md), [open-source review](docs/OPEN_SOURCE_REVIEW.md).
 
+![English workspace. Market counts and prices are live snapshots.](docs/images/overview-en.png)
+
 ## A. Install and start
 
-Prerequisites: Git, **Python ≥3.11** (3.12 recommended), and network access to package installation and public Polymarket endpoints. Python runs the application; **Node.js ≥18 is needed only for the complete frontend regression suite**. No npm build or Polymarket account/API key is required. DeepSeek translation is optional and can use paid credits if an existing backend key is configured.
+Prerequisites: Git, **Python ≥3.11** (3.12 recommended), and network access to package installation and public Polymarket endpoints. Python runs the application; **Node.js ≥18 is needed only for the complete frontend regression suite**. No npm build or Polymarket account/API key is required. English works without an LLM API; Chinese market translation uses your provider's credits only when requested.
 
 ```sh
 git clone https://github.com/EthanAlgoX/polymarket-lab.git
@@ -38,6 +42,8 @@ python -m app
 ```
 
 Run from the repository directory: relative `.env`, database, and log paths belong there. `python -m app` honors validated `PMS_HOST` / `PMS_PORT`. If port 8000 is occupied, set `PMS_PORT=8127` in `.env` and open port 8127 instead.
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Start with the catalog and monitor. For Chinese, follow [Language and your translation API](#language-and-your-translation-api); native local installations can save an API through the website without editing source or restarting.
 
 ### Windows
 
@@ -68,6 +74,8 @@ docker compose up --build
 
 Compose can read the ignored project `.env`. The container binds 0.0.0.0:8000 and uses `/app/data/scanner.db`; those three Compose settings override corresponding `.env` values. The host mapping stays **127.0.0.1:8000**. Named volumes persist the container's database/cache/logs separately from local `data/` and `logs/`. `docker compose down` stops the service and retains those volumes; do not add `-v` when preserving records. The image uses locked dependencies and runs as a non-root user.
 
+For Chinese in Docker, put `DEEPSEEK_API_KEY` in the ignored `.env` before starting. After editing it, run `docker compose up -d --force-recreate` to load the new environment, then choose 中文. The website can read API status, but **Save API settings / Remove saved settings are unavailable through Docker's bridge network** because credential writes require a loopback peer. Container translation configuration therefore uses `.env`; do not put credentials in the image or Compose file.
+
 Platform execution evidence is in [the evaluation](docs/FEATURE_EVALUATION.md). Windows/Docker instructions are not a claim that those environments were run on the current macOS host.
 
 ## Configuration before first use
@@ -97,6 +105,27 @@ DEEPSEEK_API_KEY=
 
 Process environment overrides `.env` for startup settings. **Five saved UI parameters override their environment defaults after restart**: minimum net profit, minimum net ROI, quantity, slippage rate, safety rate. Other startup settings require a restart. Save parameters through the UI/API to change an existing database; editing `.env` alone does not replace that saved group.
 
+## Language and your translation API
+
+The language switch changes both the interface and displayed market text. English shows the official source text and does not request LLM translations. The first visit defaults to English; the site remembers an explicit language choice. Chinese requires a configured backend API key, even if some translations were previously cached.
+
+1. Open **Settings → Translation API**.
+2. Choose **DeepSeek**, with `https://api.deepseek.com` and the default `deepseek-flash`, or **OpenAI-compatible** with your provider's public HTTPS API base and model name.
+3. Enter your **API key** and click **Save API settings**. Saving applies immediately. Configuration status identifies whether the active settings came from the website or the backend environment; the saved key is never returned to the browser.
+4. Click **Use Chinese** or the **中文** language button. Interface labels switch locally. Newly visible market titles, events, outcomes and expanded rules are translated in batches and persistently cached. Pending or failed translations keep the source text visible with a status message.
+
+These website save/remove controls require a native local installation. For Docker, use the [environment-based setup above](#docker) and recreate the container after changing `.env`. A remote LAN browser can read configuration status and use an already-configured API, but cannot change credentials through the website.
+
+For a compatible provider, use its **API base URL**, not a complete chat-completions endpoint; for example, a provider that publishes `/v1/chat/completions` normally has a base ending in `/v1`. Only public HTTPS destinations on the default port 443 are accepted; localhost, private networks and other protocols are unsupported. The integration expects the OpenAI-style **Chat Completions** protocol and a model that supports JSON output; providers that expose only other API protocols are unsupported. It does not automatically choose or upgrade models. Saving configuration validates its format; it does not prove that the key, model, balance or provider will work.
+
+Website settings are stored locally in ignored `data/llm-config.json`, with owner-only file permissions on Unix. They take precedence over environment-based DeepSeek settings and survive restart. Leave the key field blank to retain a key only for the same provider and API base; a different destination requires its own key. **Remove saved settings** removes the website override and falls back to any backend environment key, so translation may remain available if one is inherited. Credential changes require a native local loopback connection. Keep this local configuration file private when backing up the project.
+
+Alternatively, set `DEEPSEEK_API_KEY` in the backend environment or ignored project `.env`, then restart. Aliases: `DEEPSEEK_KEY`, `PMS_DEEPSEEK_API_KEY`. `DEEPSEEK_API_BASE` accepts only official `https://api.deepseek.com` or `/v1`. These existing settings also satisfy the Chinese-language requirement. Never put credentials in frontend code, screenshots, logs or GitHub issues.
+
+The DeepSeek preset uses `deepseek-flash` (DeepSeek V4.1 Flash), the cheapest official model checked on 2026-10-02, with thinking disabled. First-time text consumes provider credits; English, fixed interface labels and cached translations do not. A failed integrity check permits at most one corrective retry on the same configured model. Numbers, symbols and URLs are checked, but semantic accuracy still requires reading the source settlement rules. Translation never changes prices, IDs, token/outcome order or calculation inputs. Catalog search uses original title/event text; scanner search also matches already displayed Chinese; CSV always uses source text.
+
+![Translation API settings. The saved key is never displayed.](docs/images/api-settings-en.png)
+
 ## B. Verify readiness and explore
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Initial public requests run before readiness, so allow startup time. The initial sample appears first; a larger directory crawl continues in the background.
@@ -107,15 +136,15 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Initial public requests run
 
 | Sidebar entry | Do this | Expected behavior |
 | --- | --- | --- |
-| Market catalog / 市场目录 | Select a category; search original title/event text; change liquidity/sort; paginate; reset | Counts/rows use one directory revision. “Refresh” reads the server snapshot; it does not force a new whole-site crawl. |
-| Trading space / 交易空间 | Read a category's signal, required inputs, failure cases and source | Research guidance. No external weather feed, sports odds, calibrated model or live predictive decision is supplied. |
-| Open-source references / 开源参考 | Switch high-star / active high-star / all filters; open source links | Stars/maintenance/license/adoption decisions are a dated checked-in snapshot. High stars do not establish profit or current compatibility. |
-| Book scanner / 盘口扫描 | Search candidates; open detail; save a qualifying simulation | Only current selected Yes/No markets passing all gates. Auto-refresh preserves search. |
-| Monitor / 运行监控 | Compare upstream/database state, timestamps, counts and retries | Local health, public connectivity and book freshness are independent. Estimated simulation total is not realized profit. |
-| Simulations / 模拟记录 | Refresh, page through saved observations, export | 100 rows/page; saved estimates do not change with new prices. Empty history is valid. |
-| Signal history / 信号历史 | Compare first/last seen, max estimate and active/disappeared state | Past signals; status is not permission to execute now. 100 rows/page. |
-| Scanner parameters / 扫描参数 | Edit/save all five values; restart and read them again | Atomic persistence. Saving clears old candidates until a new book calculation; unsaved/failure states remain explicit. |
-| Logs / 运行日志 | Select INFO/WARNING/ERROR; refresh | Recent 100 events; visible page polls every 5 seconds. |
+| Markets | Select a category; search original title/event text; change liquidity/sort; paginate; reset | Counts/rows use one directory revision. “Refresh data” reads the server snapshot; it does not force a new whole-site crawl. |
+| Strategies | Read a category's signal, required inputs, failure cases and source | Research guidance. No external weather feed, sports odds, calibrated model or live predictive decision is supplied. |
+| Open source | Switch high-star / active high-star / all filters; open source links | Stars/maintenance/license/adoption decisions are a dated checked-in snapshot. High stars do not establish profit or current compatibility. |
+| Book scanner | Search candidates; open detail; save a qualifying simulation | Only current selected Yes/No markets passing all gates. Auto-refresh preserves search. |
+| Monitor | Compare upstream/database state, timestamps, counts and retries | Local health, public connectivity and book freshness are independent. Estimated simulation total is not realized profit. |
+| Paper records | Refresh, page through saved observations, export | 100 rows/page; saved estimates do not change with new prices. Empty history is valid. |
+| Signal history | Compare first/last seen, max estimate and active/disappeared state | Past signals; status is not permission to execute now. 100 rows/page. |
+| Settings | Configure your translation API; edit/save the five scanner parameters | API configuration applies immediately. Scanner parameters persist atomically and clear old candidates until a new book calculation; unsaved/failure states remain explicit. |
+| Logs | Select INFO/WARNING/ERROR; refresh | Recent 100 events; visible page polls every 5 seconds. |
 
 Click a directory market to open its drawer. Verify original outcome/token order, adjust per-leg quantity and other cost, inspect all outcome books and expanded rules, then close with Escape. Closed/paused/mapping-changed markets show a pause reason; unknown fees/minimum sizes, old or invalid books also halt useful candidate judgement. Three-or-more outcomes receive descriptive books, not a multi-outcome complete-set strategy. The scanner's separate detail exposes its REST calculation books/time alongside possibly newer WS display books.
 
@@ -129,7 +158,7 @@ Check monitor Gamma/CLOB/error fields, REST source age, actual verified selectio
 
 ## C. Save, change parameters, and inspect records
 
-“Save simulation / 保存模拟” saves an observation only. The backend rechecks the current scanner candidate under the same refresh lock: matching market/book identities, supported known fees, known minimum size, complete depth, fresh source times, current metadata, minimum executable size and minimum profit/ROI. Missing/expired/nonqualifying snapshots return **409** and do not save a success. Rapid clicks are guarded; intentionally saving another valid observation later is allowed.
+“Save simulation” saves an observation only. The backend rechecks the current scanner candidate under the same refresh lock: matching market/book identities, supported known fees, known minimum size, complete depth, fresh source times, current metadata, minimum executable size and minimum profit/ROI. Missing/expired/nonqualifying snapshots return **409** and do not save a success. Rapid clicks are guarded; intentionally saving another valid observation later is allowed.
 
 If no real candidate appears, verify the empty state and run mocked regression tests in stage E; there is no requirement to fabricate a profitable public trade.
 
@@ -177,7 +206,7 @@ python -m scripts.export_sample --output exports/paper-trades.csv
 
 The optional `python -m scripts.init_db` prepares schema without changing existing signal status; normal startup does this automatically. `python -m scripts.reset_database` is a destructive SQLite maintenance action: it checks the configured file/service and requires typing `RESET`. It is unnecessary for installation or routine troubleshooting.
 
-Back up `.env` and the entire `data/` directory after stopping the app; they contain local records, saved parameters and translation cache. Logs are in `logs/`. Git ignores runtime files. Complete raw market-book history, replay/backtesting, automatic retention/deletion and cross-event/platform arbitrage are not implemented.
+Back up `.env` and the entire `data/` directory after stopping the app; they contain local records, saved parameters, translation cache and any saved LLM credential. Store backups privately. Logs are in `logs/`. Git ignores runtime files. Complete raw market-book history, replay/backtesting, automatic retention/deletion and cross-event/platform arbitrage are not implemented.
 
 For an existing checkout, stop the service, back up local data, then:
 
@@ -188,14 +217,6 @@ python -m app
 ```
 
 Use the project's activated venv, or Windows `.venv\Scripts\python.exe`. Preserve an existing `.env`; compare new `.env.example` entries instead of overwriting it. If Git reports local conflicts, inspect them; do not reset away your changes. Current schema initialization retains records; future migrations must follow their release notes. `docker compose up --build` rebuilds the image while retaining named volumes.
-
-## Optional Chinese translation
-
-Chinese market display is the default; **English restores source fields**, while fixed interface controls remain mainly Chinese. Without credentials, original text remains visible with an unavailable status; common labels such as Yes/No can translate locally. Catalog search uses original title/event text. Scanner search additionally matches already displayed Chinese; CSV always uses original text.
-
-Put `DEEPSEEK_API_KEY` in the backend process environment or ignored project `.env`, then restart. Aliases: `DEEPSEEK_KEY`, `PMS_DEEPSEEK_API_KEY`. `DEEPSEEK_API_BASE` accepts only official `https://api.deepseek.com` or `/v1`. Never put the key in frontend code.
-
-The configured model is `deepseek-flash` (DeepSeek V4.1 Flash), the cheapest official model checked on 2026-10-02, with thinking disabled. Newly visible/changed titles, events, outcomes and expanded rules are batched and persistently cached; at most one corrective retry uses the same model. First-time text consumes provider credits. Failure preserves original text and never upgrades to a pricier model automatically. Translation protects numbers/symbols/URLs and never changes prices, IDs, token order or calculation inputs; semantic correctness still requires checking source settlement rules.
 
 ## E. Development and explicit network verification
 
@@ -236,7 +257,7 @@ Open [http://127.0.0.1:8128](http://127.0.0.1:8128). Every market/record is mark
 - Forty extra directory rows and 101 preloaded simulation/history observations exercise next/previous and CSV beyond one page. Additional fixture scans can create further historical observations; count actual exported/list rows rather than assuming a fixed running total.
 - Follow stages B–D, compare desktop/narrow layouts, and record observations in the evaluation. Natural public data and this synthetic harness are separate evidence.
 
-For an offline first-run check in a separate checkout/data directory, set `PMS_ENABLE_LIVE_SCANNER=false`, `PMS_PORT=8127`, and leave all translation-key aliases unset/empty. Run `python -m app`, check `/health` and all navigation routes; markets/candidates remain empty and simulation saving is refused. This tests local setup, not Polymarket connectivity.
+For an offline first-run check in a separate checkout/data directory, set `PMS_ENABLE_LIVE_SCANNER=false`, `PMS_PORT=8127`, leave all translation-key aliases unset/empty, and do not copy a saved `data/llm-config.json`. Run `python -m app`, check `/health` and all navigation routes; markets/candidates remain empty and simulation saving is refused. English works immediately; clicking 中文 must retain English and offer **Configure API**. This tests local setup and the missing-key flow, not Polymarket connectivity.
 
 ## Troubleshooting
 
@@ -247,7 +268,9 @@ For an offline first-run check in a separate checkout/data directory, set `PMS_E
 | Startup seems slow / catalog partial | Read terminal/logs and monitor; startup warms public data before readiness, directory discovery is bounded, network calls can retry. |
 | `/health` is 503 | Check database path/permissions and disk; this is local storage degradation. Do not delete records as a routine fix. |
 | Health 200 but empty scanner | See upstream status, verified selection, thresholds, source age and reason; offline mode and no candidates can both be intentional. |
-| Translation unavailable / English remains | Check backend key configuration, restart, provider error status and balance; retry explicitly or select English. Do not paste secrets into logs/issues. |
+| 中文 offers Configure API | Save your API in Settings, or configure a backend environment key and restart. Cached Chinese alone does not enable the language. |
+| API saving is refused in Docker or over LAN | Use native localhost for website credential changes. Docker reads `.env`; after editing it, recreate the container with `docker compose up -d --force-recreate`. |
+| API saved but market text stays English | Read translation status; check the provider's key, model, API base, JSON support and balance. Use Save API settings without restarting, then retry explicitly. |
 | `.env` change has no visible effect | Restart startup settings; the five saved parameters intentionally take precedence and must be changed in the UI/API. |
 | Missing frontend tests | Install Node and rerun the suite; check the skipped-case summary. |
 | Old history remains active / old audit missing | Restart/new scans reconcile state; older records created before audit capture cannot recover absent inputs. |

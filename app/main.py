@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
@@ -7,6 +8,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -23,12 +25,14 @@ from app.runtime import ScannerRuntime
 from app.services.book_analytics import analyze_book
 from app.services.csv_export import OPPORTUNITY_CSV_FIELDS, PAPER_CSV_FIELDS, csv_chunks
 from app.services.depth_calculator import calculate_depth
+from app.services.llm_config import ConfigurationFailure, LLMConfigStore, LLMConfiguration, validate_public_endpoint
 from app.services.market_discovery import normalize_market, parse_bool, parse_list
 from app.services.quote_freshness import UNKNOWN_QUOTE_AGE, oldest_quote_age, quote_age_seconds
-from app.services.translation import DeepSeekTranslator, TranslationService, deepseek_key
+from app.services.translation import DeepSeekTranslator, TranslationService, deepseek_api_base, deepseek_key
 
 DEFAULT_INSPECT_QUANTITY = Decimal("100")
 DEFAULT_INSPECT_COST = Decimal("0.05")
+LLM_CONFIG_PATH = Path("data/llm-config.json")
 settings = get_settings()
 configure_logging(settings.log_level)
 templates = Jinja2Templates(directory="app/templates")
@@ -41,7 +45,11 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     translations: TranslationService | None = None
     try:
         await runtime.start()
-        translations = TranslationService(Path("data/translations.sqlite3"), DeepSeekTranslator(deepseek_key()))
+        configuration = LLMConfigStore(LLM_CONFIG_PATH, env_key=deepseek_key, env_base=deepseek_api_base)
+        application.state.llm_config = configuration
+        translations = TranslationService(
+            Path("data/translations.sqlite3"), configured_translator(configuration.current)
+        )
         application.state.translations = translations
         await translations.start()
         yield
@@ -78,6 +86,111 @@ class SettingsUpdate(EditableScannerParameters):
 
 def runtime(request: Request) -> ScannerRuntime:
     return request.app.state.runtime
+
+
+def configured_translator(configuration: LLMConfiguration) -> DeepSeekTranslator:
+    return DeepSeekTranslator(
+        configuration.api_key,
+        api_base=configuration.api_base,
+        provider=configuration.provider,
+        model=configuration.model,
+        revision=configuration.revision,
+    )
+
+
+def local_configuration_request(request: Request, *, mutation: bool = True) -> None:
+    """Credential configuration belongs to the local origin, including on a LAN-bound scanner."""
+    host = request.url.hostname or ""
+    try:
+        host_is_local = host == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        host_is_local = False
+    try:
+        client_is_local = request.client is not None and ipaddress.ip_address(request.client.host).is_loopback
+    except ValueError:
+        client_is_local = False
+    if mutation and (not host_is_local or not client_is_local):
+        raise HTTPException(403, "API configuration is available only from the local computer.")
+    if request.headers.get("sec-fetch-site", "none") not in {"none", "same-origin"}:
+        raise HTTPException(403, "API configuration requires a request from this website's origin.")
+    if origin := request.headers.get("origin"):
+        try:
+            parsed = urlsplit(origin)
+            valid_origin = parsed.scheme == request.url.scheme and parsed.netloc == request.url.netloc
+        except ValueError:
+            valid_origin = False
+        if not valid_origin:
+            raise HTTPException(403, "API configuration requires a request from this website's origin.")
+
+
+def public_configuration_response(configuration: LLMConfiguration) -> JSONResponse:
+    return JSONResponse(configuration.public(), headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
+
+
+@app.get("/api/llm/config")
+def get_llm_configuration(request: Request) -> JSONResponse:
+    # Metadata contains no key. This also supports the loopback port published by Docker,
+    # whose container sees the host bridge's address rather than a loopback client address.
+    local_configuration_request(request, mutation=False)
+    store: LLMConfigStore | None = getattr(request.app.state, "llm_config", None)
+    if store is not None:
+        return public_configuration_response(store.current)
+    provider = request.app.state.translations.provider
+    # Isolated manual fixture servers intentionally replace the application's lifespan.
+    return public_configuration_response(
+        LLMConfiguration(
+            provider=provider.provider,
+            api_base=provider.api_base,
+            model=provider.model,
+            api_key=provider.api_key,
+            revision=provider.revision,
+        )
+    )
+
+
+@app.put("/api/llm/config")
+async def update_llm_configuration(request: Request) -> JSONResponse:
+    local_configuration_request(request)
+    if request.headers.get("content-type", "").split(";", 1)[0].strip() != "application/json":
+        raise HTTPException(415, "Send API configuration as JSON.")
+    data = bytearray()
+    async for part in request.stream():
+        data.extend(part)
+        if len(data) > 8192:
+            raise HTTPException(413, "The API configuration request is too large.")
+    try:
+        body = json.loads(data)
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(422, "The API configuration JSON is invalid.") from None
+    store: LLMConfigStore | None = getattr(request.app.state, "llm_config", None)
+    if store is None:
+        raise HTTPException(503, "API configuration is unavailable in this test server.")
+    async with store.lock:
+        try:
+            configuration = store.prepare(body, previous=store.current)
+            await validate_public_endpoint(configuration.provider, configuration.api_base)
+            store.save(configuration)
+        except ConfigurationFailure as exc:
+            raise HTTPException(422, str(exc)) from None
+        await request.app.state.translations.reconfigure(configured_translator(configuration))
+        store.current = configuration
+    return public_configuration_response(store.current)
+
+
+@app.delete("/api/llm/config")
+async def remove_llm_configuration(request: Request) -> JSONResponse:
+    local_configuration_request(request)
+    store: LLMConfigStore | None = getattr(request.app.state, "llm_config", None)
+    if store is None:
+        raise HTTPException(503, "API configuration is unavailable in this test server.")
+    async with store.lock:
+        try:
+            configuration = store.remove()
+        except ConfigurationFailure as exc:
+            raise HTTPException(422, str(exc)) from None
+        await request.app.state.translations.reconfigure(configured_translator(configuration))
+        store.current = configuration
+    return public_configuration_response(store.current)
 
 
 def register_translation_text(request: Request, payload: dict[str, Any]) -> dict[str, Any]:

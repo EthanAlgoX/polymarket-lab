@@ -1,32 +1,32 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <link rel="icon" href="/static/favicon.svg">
-  <title>盘口工作区 · Polymarket 研究台</title>
+  <title>Order Book Workspace · Polymarket Lab</title>
   <link rel="stylesheet" href="/static/css/app.css">
-  <link rel="stylesheet" href="/static/css/market-language.css">
+  <link rel="stylesheet" href="/static/css/market-language.css?v=20261003-language-1">
   <link rel="stylesheet" href="/static/css/site-shell.css">
   <link rel="stylesheet" href="/static/css/research-tools.css?v=20261003-audit">
-  <script src="/static/js/market-language.js?v=20261003-audit" defer></script>
+  <script src="/static/js/site-language.js?v=20261003-language-1" defer></script><script src="/static/js/market-language.js?v=20261003-language-1" defer></script><script src="/static/js/llm-settings.js?v=20261003-language-1" defer></script>
   <script src="/static/js/site-navigation.js" defer></script>
-  <script src="/static/js/book-quality.js?v=20261003-audit" defer></script>
-  <script src="/static/js/app.js?v=20261003-audit" defer></script>
+  <script src="/static/js/book-quality.js?v=20261003-language-1" defer></script>
+  <script src="/static/js/app.js?v=20261003-language-1" defer></script>
 </head>
 <body data-page="{{ page }}"{% if market_id %} data-market-id="{{ market_id }}"{% endif %}>
-  {% include "sidebar.html" %}
+  {% include "sidebar.html" %}{% include "language_notice.html" %}
   <main class="site-content">
     <header class="page-header">
-      <div><p class="eyebrow">盘口工作区</p><h1>{% block title %}{% endblock %}</h1></div>
+      <div><p class="eyebrow"><span data-i18n-en="ORDER BOOK WORKSPACE" data-i18n-zh="盘口工作区">ORDER BOOK WORKSPACE</span></p><h1>{% block title %}{% endblock %}</h1></div>
       <div class="page-header-tools">{% include "language_controls.html" %}<div id="clock" class="clock"></div></div>
     </header>
     <div id="error" class="error hidden" role="alert"></div>
     <p id="snapshot-state" class="snapshot-state" role="status"></p>
     {% block content %}{% endblock %}
     <footer class="workspace-footer">
-      <p>盘口结果为快照估算；双腿成交独立，合并与链上成本需要另行核验。此工具不提交订单。</p>
-      <p>前端与研究功能由本项目改造；采集和扫描底座来自 <a href="https://github.com/0106ss/polymarket-market-scanner" target="_blank" rel="noopener">Polymarket Market Scanner</a>，保留 MIT 许可与原作者声明。</p>
+      <p><span data-i18n-en="Order book results are snapshot estimates. Each leg executes independently; merge and on-chain costs require separate verification. This tool does not submit orders." data-i18n-zh="盘口结果为快照估算；双腿成交独立，合并与链上成本需要另行核验。此工具不提交订单。">Order book results are snapshot estimates. Each leg executes independently; merge and on-chain costs require separate verification. This tool does not submit orders.</span></p>
+      <p><span data-i18n-en="This project develops the interface and research tools on a data collection and scanner foundation from " data-i18n-zh="前端与研究功能由本项目改造；采集和扫描底座来自">This project develops the interface and research tools on a data collection and scanner foundation from </span><a href="https://github.com/0106ss/polymarket-market-scanner" target="_blank" rel="noopener">Polymarket Market Scanner</a><span data-i18n-en=". The MIT license and original attribution are retained." data-i18n-zh="，保留 MIT 许可与原作者声明。">. The MIT license and original attribution are retained.</span></p>
     </footer>
   </main>
 </body>

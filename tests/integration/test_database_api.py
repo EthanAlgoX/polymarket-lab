@@ -72,7 +72,8 @@ def test_main_routes_and_health() -> None:
         for route in ("/", "/opportunities", "/paper-trades", "/history", "/settings", "/logs"):
             response = client.get(route)
             assert response.status_code == 200
-            assert "不提交订单" in response.text
+            assert '<html lang="en">' in response.text
+            assert "No order submission" in response.text
         assert client.get("/api/markets?limit=1").status_code == 200
         assert client.get("/api/markets/missing").status_code == 404
 
@@ -123,8 +124,8 @@ def test_translation_api_registers_public_text_and_bounds_requests(monkeypatch) 
         assert data["model"] == "deepseek-flash"
         assert data["available"] is False
         assert data["items"][0]["text"] == "Sample?"
-        assert "DeepSeek" in data["items"][0]["reason"]
-        assert [row["text"] for row in data["items"][1:3]] == ["是", "否"]
-        assert "公开市场" in data["items"][3]["reason"]
+        assert "Configure your LLM API" in data["items"][0]["reason"]
+        assert [row["text"] for row in data["items"][1:3]] == ["Yes", "No"]
+        assert "public market text" in data["items"][3]["reason"]
         assert client.post("/api/translations", json={"texts": ["x"] * 81}).status_code == 422
         assert client.post("/api/translations", json={"texts": ["x" * 20001]}).status_code == 422
