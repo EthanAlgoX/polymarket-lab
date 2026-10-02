@@ -10,5 +10,8 @@ Local modifications include:
 - Quote-age / opportunity gates, fail-closed fee handling, and an updated local cost model.
 - Optional server-only DeepSeek translation, Chinese/English switching, and persistent translation caching.
 - A macOS local launcher and redesigned monitor, tables, history, and settings views.
+- Independent Decimal orderbook metrics, resilient public requests, revision-based catalog publication, and category-aware scanner selection.
+
+Source-level research and independent implementation decisions for other projects are recorded in docs/OPEN_SOURCE_REVIEW.md, with commit-pinned links.
 
 Other repositories listed in the research interface are references only; their code has not been incorporated.

@@ -38,9 +38,12 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Initial discovery runs in t
 
 - Gamma `/events/keyset` supplies popular, new, and category samples, followed by at most 100 pages of 100 events per pass. Discovery repeats approximately ten minutes after each pass. The UI reports coverage and failures; the cap does not establish a complete global inventory.
 - Categories cover sports, weather, crypto, economy/finance, politics, and other markets. Labels, volume, and liquidity help research screening; they are not profit signals.
-- The scanner selects a bounded number of binary Yes/No markets (`PMS_MAX_MARKETS`). CLOB `/books` refreshes every five seconds by default. The public Market WebSocket subscribes to selected tokens, but calculations use REST snapshots.
+- The scanner applies liquidity/total-volume thresholds, then reserves places across eligible categories before filling by activity (`PMS_MAX_MARKETS`). CLOB `/books` refreshes every five seconds by default. The public Market WebSocket subscribes to selected tokens, but calculations use REST snapshots.
+- Detail views include Decimal spread, near-price depth, best-level imbalance, and microprice for each real outcome. Invalid or stale books are labelled. The monitor exposes public-request, retry, and rate-limit counters.
 - Details preserve outcome/token ordering, including team-name and Up/Down binary outcomes. `Decimal` calculations check depth, fees, quote freshness, minimum size, and buffers. Unknown or unsupported fees cannot produce valid opportunities.
 - Paper records, history, and CSV exports are local. Strategy pages describe research candidates; external weather feeds, sports odds, calibrated prediction models, and real trading are not implemented.
+
+The [open-source review](docs/OPEN_SOURCE_REVIEW.md) records the 2026-10-03 high-star shortlist, pinned source evidence, compatibility/license findings, and independent improvements. The reference page can filter archived projects and shows adoption decisions.
 
 ## Optional Chinese translation
 

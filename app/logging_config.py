@@ -17,7 +17,18 @@ class JsonFormatter(logging.Formatter):
             "event": getattr(record, "event", "log"),
             "message": record.getMessage(),
         }
-        for key in ("market_id", "token_id", "duration_ms", "retry_count", "error_type"):
+        for key in (
+            "market_id",
+            "token_id",
+            "duration_ms",
+            "retry_count",
+            "error_type",
+            "origin",
+            "status",
+            "kind",
+            "attempt",
+            "retry_delay",
+        ):
             value = getattr(record, key, None)
             if value is not None:
                 payload[key] = value
@@ -28,6 +39,10 @@ def configure_logging(level: str = "INFO") -> None:
     Path("logs").mkdir(exist_ok=True)
     root = logging.getLogger()
     root.setLevel(level)
+    # The app logs sanitized request metadata itself. HTTPX's INFO request
+    # lines include raw query strings and URL userinfo; keep those out of logs.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     if root.handlers:
         return
     formatter = JsonFormatter()

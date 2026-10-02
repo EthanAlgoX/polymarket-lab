@@ -61,11 +61,17 @@ def test_climate_science_does_not_make_an_ipo_weather():
 @pytest.mark.asyncio
 async def test_schema_error_never_claims_catalog_complete():
     class BadHTTP:
-        async def request_json(self, *args, **kwargs):
-            return {"unexpected": True}
+        bad_schema = False
 
-    catalog = MarketCatalog(BadHTTP(), "https://example.test")
-    catalog.items["keep"] = {"id": "keep"}
+        async def request_json(self, *args, **kwargs):
+            if self.bad_schema:
+                return {"unexpected": True}
+            return {"events": [{"id": "event", "markets": [market_raw(id="keep")]}]}
+
+    http = BadHTTP()
+    catalog = MarketCatalog(http, "https://example.test")
+    await catalog.seed()
+    http.bad_schema = True
     await catalog.crawl()
     assert catalog.coverage == "partial"
     assert "keep" in catalog.items

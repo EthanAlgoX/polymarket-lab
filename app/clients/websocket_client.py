@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -12,6 +14,7 @@ from pydantic import BaseModel, ValidationError
 from websockets.asyncio.client import connect
 
 logger = logging.getLogger(__name__)
+MAX_SEEN_MESSAGES = 10_000
 
 
 class MarketMessage(BaseModel):
@@ -34,7 +37,7 @@ class MarketWebSocket:
         self.errors = 0
         self.reconnects = 0
         self.last_message: datetime | None = None
-        self._seen: set[str] = set()
+        self._seen: OrderedDict[str, None] = OrderedDict()
 
     def set_tokens(self, tokens: set[str]) -> None:
         self.tokens = set(tokens)
@@ -52,6 +55,9 @@ class MarketWebSocket:
                 async with connect(self.url, open_timeout=15, close_timeout=5) as websocket:
                     self.connected = True
                     delay = 1.0
+                    # A new connection must deliver its initial snapshots even
+                    # when a quiet token has the same hash and timestamp.
+                    self._seen.clear()
                     subscribed = set(self.tokens)
                     await websocket.send(
                         json.dumps({"assets_ids": sorted(subscribed), "type": "market", "custom_feature_enabled": True})
@@ -95,16 +101,20 @@ class MarketWebSocket:
             if not isinstance(item, dict):
                 continue
             try:
-                message = MarketMessage.model_validate(item)
+                MarketMessage.model_validate(item)
             except ValidationError:
                 self.errors += 1
                 continue
-            fingerprint = f"{message.event_type}:{message.asset_id}:{message.timestamp}:{item.get('hash', '')}"
+            # Batched price changes can share a timestamp and omit asset_id/hash.
+            # Deduplicate only the complete canonical payload, not that header.
+            fingerprint = hashlib.sha256(
+                json.dumps(item, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
             if fingerprint in self._seen:
                 continue
-            self._seen.add(fingerprint)
-            if len(self._seen) > 10_000:
-                self._seen.clear()
+            self._seen[fingerprint] = None
+            if len(self._seen) > MAX_SEEN_MESSAGES:
+                self._seen.popitem(last=False)
             self.messages += 1
             self.last_message = datetime.now(UTC)
             await self.handler(item)

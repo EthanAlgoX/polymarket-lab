@@ -20,6 +20,7 @@ from app.services.catalog import MarketCatalog
 from app.services.depth_calculator import calculate_depth
 from app.services.market_discovery import normalize_market
 from app.services.orderbooks import normalize_orderbook
+from app.services.quote_freshness import UNKNOWN_QUOTE_AGE, elapsed_seconds, oldest_quote_age
 from app.services.scanner import is_valid_opportunity
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ class ScannerRuntime:
         refreshed = self.status.last_orderbook_refresh
         if refreshed is None or self.status.clob_status != "正常":
             return False
-        age = result.quote_age + Decimal(str(max(0, (datetime.now(UTC) - refreshed).total_seconds())))
+        age = result.quote_age + elapsed_seconds(refreshed)
         check = result.model_copy(update={"quote_age": age})
         valid, _ = is_valid_opportunity(
             market,
@@ -129,7 +130,11 @@ class ScannerRuntime:
     async def refresh_markets(self) -> None:
         try:
             raw_markets = (
-                self.catalog.scanner_markets(self.settings.max_markets)
+                self.catalog.scanner_markets(
+                    self.settings.max_markets,
+                    minimum_liquidity=Decimal(self.settings.minimum_liquidity),
+                    minimum_volume=Decimal(self.settings.minimum_volume),
+                )
                 if self.catalog.items
                 else await self.gamma.fetch_markets(self.settings.max_markets)
             )
@@ -142,6 +147,8 @@ class ScannerRuntime:
                     skipped += 1
                     continue
                 if market.liquidity < Decimal(self.settings.minimum_liquidity):
+                    continue
+                if market.volume < Decimal(self.settings.minimum_volume):
                     continue
                 next_markets[market.market_id] = market
                 self.database.upsert_market(market)
@@ -193,11 +200,8 @@ class ScannerRuntime:
                 fee = FeeQuote(status=FeeStatus.UNKNOWN, reason="未核实当前费率公式")
             if fee.reason:
                 self.fee_reasons[market.market_id] = fee.reason
-            try:
-                snapshot_at = min(float(yes.timestamp), float(no.timestamp)) / 1000
-                age = Decimal(str(max(0, received_at.timestamp() - snapshot_at)))
-            except (ValueError, TypeError):
-                age = Decimal("999999")
+            source_age = oldest_quote_age((yes.timestamp, no.timestamp), now=received_at)
+            age = source_age if source_age is not None else UNKNOWN_QUOTE_AGE
             result = calculate_depth(
                 yes,
                 no,
@@ -209,7 +213,9 @@ class ScannerRuntime:
                 quote_age=age,
             )
             minimum = max(yes.min_order_size or Decimal("0"), no.min_order_size or Decimal("0"))
-            if result.executable_quantity < minimum:
+            if source_age is None or age > Decimal(self.settings.max_quote_age_seconds):
+                result.status = "STALE"
+            elif result.executable_quantity < minimum:
                 result.status = "BELOW_MIN_ORDER"
             new_results[market.market_id] = result
             valid, _ = is_valid_opportunity(
@@ -249,8 +255,7 @@ class ScannerRuntime:
         payload["calculation"] = result.model_dump(mode="json") if result else None
         if result and self.status.last_orderbook_refresh:
             payload["calculation"]["quote_age"] = str(
-                result.quote_age
-                + Decimal(str(max(0, (datetime.now(UTC) - self.status.last_orderbook_refresh).total_seconds())))
+                result.quote_age + elapsed_seconds(self.status.last_orderbook_refresh)
             )
         payload["is_candidate"] = bool(result and self.valid_opportunity(market, result))
         payload["fee_reason"] = self.fee_reasons.get(market.market_id)

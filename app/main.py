@@ -19,10 +19,12 @@ from pydantic import BaseModel, Field, field_validator
 from app import __version__
 from app.config import get_settings
 from app.logging_config import configure_logging
-from app.models import FeeQuote, FeeStatus
+from app.models import FeeQuote, FeeStatus, OrderBook
 from app.runtime import ScannerRuntime
+from app.services.book_analytics import analyze_book
 from app.services.depth_calculator import calculate_depth
 from app.services.market_discovery import normalize_market
+from app.services.quote_freshness import UNKNOWN_QUOTE_AGE, oldest_quote_age, quote_age_seconds
 from app.services.translation import DeepSeekTranslator, TranslationService, deepseek_key
 
 DEFAULT_INSPECT_QUANTITY = Decimal("100")
@@ -83,6 +85,16 @@ def register_translation_text(request: Request, payload: dict[str, Any]) -> dict
     return payload
 
 
+def book_analysis(book: OrderBook | None, max_age: Decimal, *, now: datetime | None = None) -> dict[str, Any] | None:
+    if book is None:
+        return None
+    analysis: dict[str, Any] = analyze_book(book)
+    age = quote_age_seconds(book.timestamp, now=now)
+    analysis["quote_age_seconds"] = str(age) if age is not None else None
+    analysis["stale"] = age is None or age > max_age
+    return analysis
+
+
 @app.post("/api/translations")
 async def translate_public_text(body: TranslationRequest, request: Request) -> dict[str, Any]:
     return request.app.state.translations.resolve(body.texts)
@@ -102,6 +114,8 @@ def system_status(request: Request) -> dict[str, Any]:
     status["websocket_errors"] = rt.websocket.errors
     status["websocket_reconnects"] = rt.websocket.reconnects
     status.update({"database": "正常" if rt.database.health() else "异常", "version": __version__, "read_only": True})
+    status["public_http"] = rt.http.metrics()
+    status["scanner_selection"] = dict(rt.catalog.snapshot.scanner_selection)
     return status
 
 
@@ -136,6 +150,9 @@ def market_api(market_id: str, request: Request) -> dict[str, Any]:
     no_book = rt.books.get(market.no_token_id)
     payload["yes_orderbook"] = yes_book.model_dump(mode="json") if yes_book else None
     payload["no_orderbook"] = no_book.model_dump(mode="json") if no_book else None
+    payload["book_analytics"] = [
+        book_analysis(book, Decimal(rt.settings.max_quote_age_seconds)) for book in (yes_book, no_book)
+    ]
     return register_translation_text(request, payload)
 
 
@@ -306,9 +323,10 @@ def catalog_api(
     min_liquidity: float = Query(0, ge=0),
 ) -> dict[str, Any]:
     rt = runtime(request)
+    snapshot = rt.catalog.snapshot
     rows = [
         x
-        for x in rt.catalog.items.values()
+        for x in snapshot.items.values()
         if (category == "all" or x["category"] == category)
         and (not search or search.casefold() in (x["question"] + " " + x["event"]).casefold())
         and x["liquidity"] >= min_liquidity
@@ -319,7 +337,7 @@ def catalog_api(
         rows.sort(key=lambda x: x.get("endDate") or "9999")
     else:
         rows.sort(key=lambda x: x["liquidity"] if sort == "liquidity" else x["volume24h"], reverse=True)
-    result = rt.catalog.summary()
+    result = rt.catalog.summary(snapshot)
     result.update(
         {
             "filteredTotal": len(rows),
@@ -346,17 +364,23 @@ async def inspect_market(
     extra_cost: Annotated[Decimal, Query(ge=0, le=10000)] = DEFAULT_INSPECT_COST,
 ) -> dict[str, Any]:
     rt = runtime(request)
-    item = rt.catalog.items.get(market_id)
-    raw = rt.catalog.raw.get(market_id)
+    snapshot = rt.catalog.snapshot
+    item = snapshot.items.get(market_id)
+    raw = snapshot.raw.get(market_id)
     if item is None or raw is None:
         raise HTTPException(404, "市场尚未进入目录")
     result = dict(item)
     try:
         books = await rt.clob.fetch_books(item["tokens"])
-        as_of = datetime.now(UTC).isoformat()
+        observed_at = datetime.now(UTC)
+        as_of = observed_at.isoformat()
         result.update(
             {
                 "books": [books[t].model_dump(mode="json") if t in books else None for t in item["tokens"]],
+                "book_analytics": [
+                    book_analysis(books.get(t), Decimal(rt.settings.max_quote_age_seconds), now=observed_at)
+                    for t in item["tokens"]
+                ],
                 "asOf": as_of,
                 "calculation": None,
             }
@@ -381,18 +405,16 @@ async def inspect_market(
                 safety_rate=Decimal(rt.settings.safety_rate),
                 extra_cost=extra_cost,
             )
-            minimum = max(b.min_order_size or Decimal("0") for b in books.values())
-            try:
-                oldest_timestamp = min(float(b.timestamp) for b in books.values()) / 1000
-                calc.quote_age = Decimal(str(max(0, datetime.now(UTC).timestamp() - oldest_timestamp)))
-            except (TypeError, ValueError):
-                calc.quote_age = Decimal("999999")
-            if calc.executable_quantity < minimum:
-                calc.status = "BELOW_MIN_ORDER"
-            elif calc.quote_age > Decimal(rt.settings.max_quote_age_seconds):
+            relevant_books = [books[token] for token in item["tokens"]]
+            minimum = max(book.min_order_size or Decimal("0") for book in relevant_books)
+            age = oldest_quote_age((book.timestamp for book in relevant_books), now=observed_at)
+            calc.quote_age = age if age is not None else UNKNOWN_QUOTE_AGE
+            if age is None or calc.quote_age > Decimal(rt.settings.max_quote_age_seconds):
                 calc.status = "STALE"
+            elif calc.executable_quantity < minimum:
+                calc.status = "BELOW_MIN_ORDER"
             result["calculation"] = calc.model_dump(mode="json")
-            result["minimumOrderSize"] = str(max(b.min_order_size or Decimal("0") for b in books.values()))
+            result["minimumOrderSize"] = str(minimum)
         return register_translation_text(request, result)
     except Exception as exc:
         raise HTTPException(502, "公开盘口暂时无法读取; 请稍后重试") from exc
