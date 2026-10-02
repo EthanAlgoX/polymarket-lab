@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest a read-only research feature
+body:
+  - type: textarea
+    id: usecase
+    attributes:
+      label: Research use case
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundary
+    attributes:
+      label: Boundary
+      options:
+        - label: This request does not require wallet access, signing, order submission, or restriction bypass.
+          required: true

@@ -1,0 +1,21 @@
+name: Release Check
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: python -c "import tomllib; assert tomllib.load(open('pyproject.toml','rb'))['project']['version'] == '0.1.0'"
+      - run: test -s CHANGELOG.md && test -s README.md && test -s RELEASE_NOTES.md
+      - run: python -m pytest
+      - run: python scripts/security_scan.py
+      - run: git ls-files | grep -Ev '(^\.env$|\.db$|^logs/[^.]|^data/[^.])'

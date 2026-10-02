@@ -1,0 +1,47 @@
+Polymarket Lab 本地研究台
+
+在仓库根目录启动，详细步骤见 README_CN.md。
+macOS：./start-local.command（需要 Python >=3.11，推荐3.12）
+Linux：创建并激活 .venv，安装 requirements-lock.txt，再运行：
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+地址：http://127.0.0.1:8000/
+运行环境为本项目 .venv/；数据、翻译缓存和日志在 data/ 与 logs/。
+项目仅读取公开行情，不连接钱包或提交订单。
+
+所有页面共用响应式侧边栏。
+目录通过官方 Gamma /events/keyset 先显示热门、最新和分类样本，再读取事件分页。
+每轮最多100页，每页最多100事件，完成后约10分钟重新发现。
+页面显示覆盖状态；达到上限不意味着完整收录全站。
+分类依据事件标签，不把整个 Climate & Science 标签作为天气。
+
+扫描器监控有限数量的 Yes/No 市场，由 PMS_MAX_MARKETS 控制。
+默认5秒REST读取CLOB订单簿，WebSocket订阅选定token。
+净差计算依赖REST快照，不是毫秒级交易执行。
+详情支持队名、Up/Down等二元结果，保留结果/token顺序。
+
+默认中文，可切换 English 并跨页面保存选择。
+配置 DeepSeek 后，可见标题、事件、结果和展开规则自动翻译。
+新市场或原文变化会触发新翻译；英语模式恢复原文。
+后端读取 DEEPSEEK_API_KEY、DEEPSEEK_KEY 或 PMS_DEEPSEEK_API_KEY，也支持忽略的本地 .env。
+macOS启动脚本未继承密钥时，会加载交互式zsh环境，包括 ~/.zshrc。
+DEEPSEEK_API_BASE 仅支持 https://api.deepseek.com 或 https://api.deepseek.com/v1。
+使用 deepseek-flash（DeepSeek V4.1 Flash），关闭思考模式。
+该模型为2026-10-02核实的官方API最便宜可用模型；有限纠正重试用同一模型，不自动升级。
+仅翻译当前展示文本；缓存到 data/translations.sqlite3，刷新和重启可复用。
+新文本首次调用消耗提供商账户额度。密钥不进入浏览器、译文或代码。
+缺少密钥或服务失败时保留原文并显示状态。
+中文为机器翻译，结算请核对英文原文；价格、金额、ID和计算来自原始数据。
+搜索和CSV导出目前使用原文。
+
+金融计算保持Decimal，逐档计算成本、手续费和缓冲。
+费用公式：股份数 × rate × p × (1-p)，当前仅支持指数1。
+未知费率不按零处理；报价过期或条件不满足时不认定有效机会。
+净差=完整集理论回收-双腿成本-手续费-滑点缓冲-安全缓冲-其他成本。
+收益率分母为以上总预算；其他成本默认0.05 pUSD，可在详情调整。
+pUSD与USDC不自动混用。链上合并成本未实时测量，两腿执行互相独立。
+机会和模拟记录不保证成交或获利。
+
+研究空间页提供候选方向，外部天气观测、体育赔率和回测预测模型尚未接入。
+MIT采集与扫描底座：https://github.com/0106ss/polymarket-market-scanner
+原许可与上游提交见 LICENSE / UPSTREAM.txt。
+其他开源项目仅作研究参考，未集成代码。

@@ -1,0 +1,15 @@
+services:
+  scanner:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      PMS_HOST: 0.0.0.0
+    volumes:
+      - scanner-data:/app/data
+      - scanner-logs:/app/logs
+    restart: unless-stopped
+    stop_grace_period: 15s
+volumes:
+  scanner-data:
+  scanner-logs:

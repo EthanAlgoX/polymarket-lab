@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+.env
+data
+logs
+tests
+docs/images
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+.playwright-cli
+*.db
+*.csv

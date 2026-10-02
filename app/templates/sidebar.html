@@ -1,0 +1,16 @@
+<aside class="rail site-rail">
+  <a class="brand" href="/"><img src="/static/favicon.svg" alt="" width="36" height="36"><span>Polymarket<small>研究台</small></span></a>
+  <nav class="site-nav" aria-label="研究导航">
+    <a href="/#markets"{% if page == 'research' %} data-view="markets" class="active" aria-current="page"{% endif %}>市场目录</a>
+    <a href="/#strategies"{% if page == 'research' %} data-view="strategies"{% endif %}>交易空间</a>
+    <a href="/#opensource"{% if page == 'research' %} data-view="opensource"{% endif %}>开源参考</a>
+    <a href="/opportunities"{% if page in ['opportunities', 'market'] %} class="active" aria-current="page"{% endif %}>盘口扫描</a>
+    <a href="/monitor"{% if page == 'dashboard' %} class="active" aria-current="page"{% endif %}>运行监控</a>
+    <span class="site-nav-group">盘口工具</span>
+    <a href="/paper-trades"{% if page == 'paper-trades' %} class="active" aria-current="page"{% endif %}>模拟记录</a>
+    <a href="/history"{% if page == 'history' %} class="active" aria-current="page"{% endif %}>信号历史</a>
+    <a href="/settings"{% if page == 'settings' %} class="active" aria-current="page"{% endif %}>扫描参数</a>
+    <a href="/logs"{% if page == 'logs' %} class="active" aria-current="page"{% endif %}>运行日志</a>
+  </nav>
+  <div class="rail-foot">公开数据 · 本地运行<br>只读，不提交订单<br><a href="https://docs.polymarket.com/" target="_blank" rel="noopener">Polymarket 文档</a></div>
+</aside>

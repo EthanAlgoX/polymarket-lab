@@ -1,0 +1,14 @@
+Polymarket Lab is adapted from the MIT-licensed Polymarket Market Scanner:
+https://github.com/0106ss/polymarket-market-scanner
+Upstream commit: 587daca8548f6c737b4d642b49c9f000247361ab
+
+The original LICENSE and copyright notice are retained.
+
+Local modifications include:
+- Event-based category discovery and a paginated market catalog with explicit coverage limits.
+- A custom market research interface, market detail drawer, and shared responsive sidebar.
+- Quote-age / opportunity gates, fail-closed fee handling, and an updated local cost model.
+- Optional server-only DeepSeek translation, Chinese/English switching, and persistent translation caching.
+- A macOS local launcher and redesigned monitor, tables, history, and settings views.
+
+Other repositories listed in the research interface are references only; their code has not been incorporated.

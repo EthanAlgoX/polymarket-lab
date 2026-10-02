@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}扫描运行监控{% endblock %}
+{% block content %}
+<div class="statusline"><span id="system-pill" class="pill waiting">正在检查行情链路</span><span id="last-update">等待公开行情</span></div>
+<section class="monitor-metrics" aria-label="扫描状态">
+  <article><label>正在扫描的二元市场</label><strong id="binary-markets">—</strong><small>有限盘口样本</small></article>
+  <article><label>通过门槛的研究候选</label><strong id="opportunity-count">—</strong><small>费用、深度与时效共同筛选</small></article>
+  <article><label>模拟记录内估算收益</label><strong id="paper-profit">—</strong><small>pUSD · 并非实际收益</small></article>
+</section>
+<div class="monitor-counters"><span>本轮读取 <b id="active-markets">—</b> 个市场</span><span>选定订阅 <b id="subscribed-tokens">—</b> 个 token</span><span>已保存 <b id="paper-count">—</b> 条模拟记录</span></div>
+<section class="monitor-grid">
+  <article class="panel"><h2>数据连接</h2><div id="connections" class="connections"></div></article>
+  <article class="panel"><h2>刷新与异常</h2><dl id="runtime"></dl></article>
+</section>
+<section class="panel"><div class="panel-head"><h2>扫描样本快照</h2><a class="button ghost" href="/opportunities">查看候选</a></div><div class="table-wrap"><table><thead><tr><th>市场</th><th>流动性</th><th>累计成交量</th><th>费率参数</th><th>计算状态</th></tr></thead><tbody id="market-preview"><tr><td colspan="5" class="empty">正在读取选定市场…</td></tr></tbody></table></div></section>
+{% endblock %}
