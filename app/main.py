@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import csv
-import io
 import json
-from collections.abc import AsyncIterator, Iterable, Iterator
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -23,6 +21,7 @@ from app.logging_config import configure_logging
 from app.models import FeeQuote, FeeStatus, OrderBook
 from app.runtime import ScannerRuntime
 from app.services.book_analytics import analyze_book
+from app.services.csv_export import OPPORTUNITY_CSV_FIELDS, PAPER_CSV_FIELDS, csv_chunks
 from app.services.depth_calculator import calculate_depth
 from app.services.market_discovery import normalize_market, parse_bool, parse_list
 from app.services.quote_freshness import UNKNOWN_QUOTE_AGE, oldest_quote_age, quote_age_seconds
@@ -120,6 +119,7 @@ async def system_status(request: Request) -> dict[str, Any]:
     status["websocket_reconnects"] = rt.websocket.reconnects
     status.update({"database": "正常" if rt.database.health() else "异常", "version": __version__, "read_only": True})
     status["public_http"] = rt.http.metrics()
+    status["live_scanner_enabled"] = rt.settings.enable_live_scanner
     status["scanner_selection"] = dict(rt.catalog.snapshot.scanner_selection)
     status["opportunity_count"] = sum(
         rt.valid_opportunity(rt.markets[mid], result) for mid, result in rt.results.items() if mid in rt.markets
@@ -260,78 +260,11 @@ def logs_api(request: Request, limit: int = Query(100, ge=1, le=500)) -> dict[st
     }
 
 
-CSV_NUMERIC_FIELDS = {
-    "id",
-    "target_quantity",
-    "executable_quantity",
-    "total_cost",
-    "net_profit",
-    "net_roi",
-    "max_net_profit",
-    "max_net_roi",
-    "max_quantity",
-}
-PAPER_CSV_FIELDS = [
-    "id",
-    "created_at",
-    "market_id",
-    "market_question",
-    "target_quantity",
-    "executable_quantity",
-    "total_cost",
-    "net_profit",
-    "net_roi",
-    "status",
-    "failure_reason",
-    "trigger_type",
-    "data_source",
-]
-OPPORTUNITY_CSV_FIELDS = [
-    "id",
-    "market_id",
-    "question",
-    "first_seen",
-    "last_seen",
-    "status",
-    "max_net_profit",
-    "max_net_roi",
-    "max_quantity",
-    "disappeared_reason",
-]
-
-
 def _csv_response(rows: Iterable[dict[str, Any]], filename: str, fields: list[str]) -> StreamingResponse:
-    def chunks() -> Iterator[bytes]:
-        stream = io.StringIO()
-        writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
-        stream.write("\ufeff")
-        writer.writeheader()
-        yield stream.getvalue().encode("utf-8")
-        stream.seek(0)
-        stream.truncate(0)
-        try:
-            for count, row in enumerate(rows, 1):
-                safe = dict(row)
-                for key, value in safe.items():
-                    if (
-                        key not in CSV_NUMERIC_FIELDS
-                        and isinstance(value, str)
-                        and value.lstrip().startswith(("=", "+", "-", "@"))
-                    ):
-                        safe[key] = "'" + value
-                writer.writerow(safe)
-                if count % 500 == 0:
-                    yield stream.getvalue().encode("utf-8")
-                    stream.seek(0)
-                    stream.truncate(0)
-            if stream.tell():
-                yield stream.getvalue().encode("utf-8")
-        finally:
-            if hasattr(rows, "close"):
-                rows.close()
-
     return StreamingResponse(
-        chunks(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        csv_chunks(rows, fields),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -427,6 +360,7 @@ async def catalog_api(
             "offset": offset,
             "limit": limit,
             "scannerCount": len(rt.markets),
+            "liveScannerEnabled": rt.settings.enable_live_scanner,
             "scannerRefreshSeconds": rt.settings.rest_refresh_seconds,
             "candidateCount": sum(
                 rt.valid_opportunity(rt.markets[mid], c) for mid, c in rt.results.items() if mid in rt.markets
@@ -452,14 +386,15 @@ async def inspect_market(
     result = dict(item)
     try:
         # Catalog browsing tolerates older metadata; a cost decision needs the
-        # current trading state and the exact original outcome/token mapping.
+        # latest API response and exact original outcome/token mapping. Gamma
+        # may cache metadata; observed_at is our receipt time, not source time.
         latest_rows = await rt.gamma.fetch_markets_by_ids([market_id])
         observed_at = datetime.now(UTC)
         result["metadataAsOf"] = observed_at.isoformat()
         current = latest_rows[0] if latest_rows else None
         reason = ""
         if current is None:
-            reason = "最新公开接口未返回该开盘市场; 可能已关闭, 暂停成本核验"
+            reason = "本次公开接口未返回该开盘市场; 可能已关闭, 暂停成本核验"
         elif (
             not parse_bool(current.get("active"))
             or parse_bool(current.get("closed"), default=True)

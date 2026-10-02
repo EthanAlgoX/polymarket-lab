@@ -3,13 +3,11 @@ setlocal
 cd /d "%~dp0" || exit /b 1
 where python >nul 2>nul || (echo [ERROR] Python 3.11+ not found & exit /b 1)
 python -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" || (echo [ERROR] Python 3.11+ required & exit /b 1)
-if not exist .venv python -m venv .venv || exit /b 1
-call .venv\Scripts\activate.bat || exit /b 1
-python -m pip install --upgrade pip --quiet || exit /b 1
-python -m pip install --quiet -r requirements-dev.txt || exit /b 1
+if not exist .venv\Scripts\python.exe (python -m venv .venv || exit /b 1)
+.venv\Scripts\python.exe -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" || (echo [ERROR] Existing virtual environment requires Python 3.11+. & exit /b 1)
+.venv\Scripts\python.exe -m pip install -r requirements-lock.txt || exit /b 1
 if not exist data mkdir data
 if not exist logs mkdir logs
 if not exist .env copy .env.example .env >nul
-python -m scripts.init_db || exit /b 1
-python -m pytest -m "not live" || exit /b 1
-echo [OK] Installation and base tests completed.
+.venv\Scripts\python.exe -m scripts.init_db || exit /b 1
+echo [OK] Runtime dependencies and database schema installed. Run run.bat to start.

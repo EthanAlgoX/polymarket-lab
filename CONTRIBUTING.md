@@ -2,7 +2,7 @@
 
 1. Open an issue describing the change and its public-data scope.
 2. Create a focused branch; add meaningful tests for changed behavior.
-3. Install `requirements-dev.txt`, then run the checks below (or `lint.bat` / `test.bat` on Windows).
+3. Follow the README runtime setup, install `requirements-dev.txt` and Node.js ≥18, then run the checks below (or `lint.bat` / `test.bat` on Windows). Node runs the isolated frontend tests without npm dependencies; missing Node causes those cases to skip. CI explicitly installs Node 22.
 4. Keep live-network tests opt-in. Never add wallet connectivity, wallet secrets, signing, authenticated Polymarket trading, real order submission, transfers, or geographic bypass.
 5. Optional DeepSeek credentials belong exclusively on the backend in environment variables or an ignored local `.env`. They may translate public market text only; never expose, log, or commit them. Preserve original data, outcome/token order, settlement identifiers, and Decimal calculations.
 6. Submit a pull request using the template and preserve upstream attribution and license notices.

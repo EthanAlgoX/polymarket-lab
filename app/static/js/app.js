@@ -44,10 +44,10 @@ async function dashboard() {
   $('#subscribed-tokens').textContent=s.subscribed_tokens; $('#opportunity-count').textContent=s.opportunity_count;
   $('#paper-count').textContent=data.paper_trade_count; $('#paper-profit').textContent=num(data.estimated_paper_profit,6);
   const healthy=s.gamma_status==='正常'&&s.clob_status==='正常';
-  $('#system-pill').textContent=healthy?'公开数据链路正常':'公开数据链路未就绪'; $('#system-pill').className=`pill ${healthy?'ok':'waiting'}`;
+  $('#system-pill').textContent=s.live_scanner_enabled===false?'本地离线模式':healthy?'公开数据链路正常':'公开数据链路未就绪'; $('#system-pill').className=`pill ${healthy?'ok':'waiting'}`;
   $('#last-update').textContent=`最后订单簿：${dateText(s.last_orderbook_refresh)}`;
   $('#connections').innerHTML=[['Gamma API',s.gamma_status],['CLOB API',s.clob_status],['Market WebSocket',s.websocket_status],['地区状态',s.geoblock_status]].map(x=>`<div class="connection"><b>${esc(x[0])}</b><span>${esc(x[1])}</span></div>`).join('');
-  $('#runtime').innerHTML=`<dt>启动时间</dt><dd>${dateText(s.started_at)}</dd><dt>最后市场刷新</dt><dd>${dateText(s.last_market_refresh)}</dd><dt>WebSocket 消息</dt><dd>${num(s.websocket_messages,0)}</dd><dt>最近错误</dt><dd>${esc(s.recent_error||'无')}</dd>`;
+  $('#runtime').innerHTML=`<dt>启动时间</dt><dd>${dateText(s.started_at)}</dd><dt>市场元数据 API 拉取</dt><dd>${dateText(s.last_market_refresh)}</dd><dt>WebSocket 消息</dt><dd>${num(s.websocket_messages,0)}</dd><dt>最近错误</dt><dd>${esc(s.recent_error||'无')}</dd>`;
   const h=s.public_http||{};
   $('#http-metrics').innerHTML=`<span>公开 API 请求 <b>${num(h.calls,0)}</b></span><span>实际重试 <b>${num(h.retries,0)}</b></span><span>限流响应 <b>${num(h.rate_limited,0)}</b></span><span>最近等待 <b>${num(h.last_retry_delay,2)} 秒</b></span>`;
   $('#market-preview').innerHTML=markets.items.length?markets.items.map(m=>`<tr><td><a href="/markets/${encodeURIComponent(m.market_id)}">${marketText(m.question)}</a></td><td>${num(m.liquidity,2)}</td><td>${num(m.volume,2)}</td><td>${m.fee_rate!=null?`${num(Number(m.fee_rate)*100,2)}%`:m.fees_enabled===false?'无费用':m.fee_reason?'手续费未知':'待核验'}</td><td>${esc(calculationStatus[m.calculation?.status]||'等待订单簿')}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">当前没有满足过滤条件的真实市场</td></tr>';

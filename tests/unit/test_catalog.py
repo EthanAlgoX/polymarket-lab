@@ -163,6 +163,24 @@ async def test_market_closing_between_seed_and_traversal_is_removed() -> None:
     assert set(catalog.items) == set(catalog.raw) == {"keep"}
 
 
+@pytest.mark.parametrize("closed", [None, "unknown", {}, 2])
+def test_catalog_excludes_unknown_closed_status(closed: object) -> None:
+    catalog = MarketCatalog(StubHTTP([]), "https://example.test")
+    items, originals = {}, {}
+    catalog.ingest([event("unknown", closed=closed), event("open", closed=False)], items, originals)
+    assert set(items) == set(originals) == {"open"}
+
+
+def test_catalog_excludes_missing_closed_status_and_removes_old_row() -> None:
+    catalog = MarketCatalog(StubHTTP([]), "https://example.test")
+    items, originals = {}, {}
+    catalog.ingest([event("uncertain")], items, originals)
+    missing = event("uncertain")
+    del missing["markets"][0]["closed"]
+    catalog.ingest([missing, event("open")], items, originals)
+    assert set(items) == set(originals) == {"open"}
+
+
 @pytest.mark.asyncio
 async def test_repeated_cursor_stops_and_never_claims_completion() -> None:
     http = StubHTTP(

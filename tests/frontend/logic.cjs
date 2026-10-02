@@ -120,6 +120,7 @@ async function settingSaveIsSingleAndHonest() {
 }
 async function verifiedScannerMix() {
   const env=environment('app/static/js/research.js');
+  assert.ok(env.run('coverageText({liveScannerEnabled:false})').includes('本地离线模式'));
   env.context.selection={selectedTotal:80,categoryCounts:{sports:40,other:40},verification:{sourceRevision:3,requestedTotal:80,verifiedTotal:8,categoryCounts:{sports:5,crypto:3},verifiedAt:'2026-10-03T00:00:00Z',failed:false}};
   const text=env.run('scannerMixText(selection)');
   assert.ok(text.includes('实际扫描 8'));assert.ok(text.includes('体育 5'));assert.ok(text.includes('加密 3'));assert.ok(!text.includes('体育 40'));
@@ -129,7 +130,7 @@ async function verifiedScannerMix() {
   assert.ok(env.run('scannerMixText(selection)').includes('核验失败，暂停候选判断'));
   delete env.context.selection.verification;
   assert.ok(env.run('scannerMixText(selection)').includes('目录预选 80'));
-  assert.ok(env.run('scannerMixText(selection)').includes('尚未完成最新元数据核验'));
+  assert.ok(env.run('scannerMixText(selection)').includes('尚未完成市场元数据 API 核验'));
 }
 async function unavailableMarketStopsDetail() {
   const env=environment('app/static/js/research.js');

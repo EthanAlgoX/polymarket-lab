@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Unified locked runtime installation across local/dev/Windows/container workflows, with platform-specific uvloop selection and macOS launcher recovery/lock-change detection.
+- Made offline CSV export share complete, stable-header, formula-safe output with API exports; kept schema preparation idempotent and made configured SQLite reset explicitly confirmed and fail closed while service state is uncertain.
+
+- Reworked English/Chinese README into reproducible installation and A–E acceptance stages, with nine navigation workflows, candidate/empty-state interpretation, source audit, persistence/upgrade instructions, explicit live tests, and actual platform verification boundaries.
+- Added `docs/FEATURE_EVALUATION.md` to separate fresh-install, real-network, isolated synthetic UI, and offline regression evidence.
+- Added an isolated, offline `[TEST]` fixture server for reproducible candidate saving, invalid-market gates, audit details, and record pagination without writing to user data.
+- Expose explicit offline scanner state in system/catalog APIs and show it in the dashboard instead of indefinite market-discovery labels.
+- Exclude markets with missing, null, or invalid closed status from the open catalog rather than treating unknown state as trading.
+- Ensure CI installs Node 22 to execute the frontend logic cases; document source quote timestamps separately from API receipt time and cached metadata.
+
 - Added an evidence-backed high-star project review and archive/star filters in the reference page.
 - Added Decimal orderbook-quality summaries for each outcome, with invalid-book and freshness labels.
 - Added bounded Retry-After handling, shared per-origin cooldown, sanitized typed errors, and public HTTP counters.

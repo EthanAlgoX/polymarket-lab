@@ -20,10 +20,23 @@ if [[ ! -x "$PM_RUNTIME" ]]; then
     exit 1
   fi
   "$PM_PYTHON" -m venv .venv
-  PM_REQUIREMENTS="requirements.txt"
-  if [[ -f requirements-lock.txt ]]; then
-    PM_REQUIREMENTS="requirements-lock.txt"
-  fi
+fi
+if ! "$PM_RUNTIME" -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
+  print -u2 '现有 .venv 需要 Python >=3.11。请移走旧虚拟环境后重新启动。'
+  exit 1
+fi
+PM_REQUIREMENTS="requirements.txt"
+if [[ -f requirements-lock.txt ]]; then
+  PM_REQUIREMENTS="requirements-lock.txt"
+fi
+PM_DEPENDENCY_HASH="$("$PM_RUNTIME" -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "$PM_REQUIREMENTS")"
+PM_DEPENDENCY_MARKER="$PWD/.venv/.requirements.sha256"
+PM_INSTALLED_HASH=""
+if [[ -f "$PM_DEPENDENCY_MARKER" ]]; then
+  PM_INSTALLED_HASH="$(<"$PM_DEPENDENCY_MARKER")"
+fi
+if [[ "$PM_INSTALLED_HASH" != "$PM_DEPENDENCY_HASH" ]] || ! "$PM_RUNTIME" -c 'import fastapi, uvicorn, httpx, websockets, pydantic_settings, sqlalchemy, jinja2' >/dev/null 2>&1; then
   "$PM_RUNTIME" -m pip install -r "$PM_REQUIREMENTS"
+  print -r -- "$PM_DEPENDENCY_HASH" > "$PM_DEPENDENCY_MARKER"
 fi
 exec "$PM_RUNTIME" -m app

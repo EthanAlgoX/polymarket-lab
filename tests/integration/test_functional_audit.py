@@ -23,6 +23,15 @@ def client():
         yield value
 
 
+def test_deliberate_offline_mode_is_identifiable_without_upstream_requests(client):
+    status = client.get("/api/system/status").json()
+    catalog = client.get("/api/catalog").json()
+    assert status["live_scanner_enabled"] is False
+    assert catalog["liveScannerEnabled"] is False
+    assert status["public_http"]["calls"] == 0
+    assert catalog["total"] == 0
+
+
 def install_market(rt):
     raw = {
         "id": "1",

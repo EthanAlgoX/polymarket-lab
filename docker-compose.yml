@@ -5,6 +5,11 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       PMS_HOST: 0.0.0.0
+      PMS_PORT: 8000
+      PMS_DATABASE_URL: sqlite:////app/data/scanner.db
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - scanner-data:/app/data
       - scanner-logs:/app/logs

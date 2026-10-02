@@ -216,7 +216,7 @@ class MarketCatalog:
                     continue
                 if not (
                     parse_bool(raw.get("active"))
-                    and not parse_bool(raw.get("closed"))
+                    and not parse_bool(raw.get("closed"), default=True)
                     and parse_bool(raw.get("acceptingOrders"))
                     and parse_bool(raw.get("enableOrderBook"))
                 ):

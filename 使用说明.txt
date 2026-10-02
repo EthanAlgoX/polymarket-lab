@@ -3,7 +3,8 @@ Polymarket Lab 本地研究台
 在仓库根目录启动，详细步骤见 README_CN.md。
 macOS：./start-local.command（需要 Python >=3.11，推荐3.12）
 Linux：创建并激活 .venv，安装 requirements-lock.txt，再运行：
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m app
+此命令读取 .env 中的 PMS_HOST / PMS_PORT。
 地址：http://127.0.0.1:8000/
 运行环境为本项目 .venv/；数据、翻译缓存和日志在 data/ 与 logs/。
 项目仅读取公开行情，不连接钱包或提交订单。
@@ -31,7 +32,7 @@ DEEPSEEK_API_BASE 仅支持 https://api.deepseek.com 或 https://api.deepseek.co
 新文本首次调用消耗提供商账户额度。密钥不进入浏览器、译文或代码。
 缺少密钥或服务失败时保留原文并显示状态。
 中文为机器翻译，结算请核对英文原文；价格、金额、ID和计算来自原始数据。
-搜索和CSV导出目前使用原文。
+目录搜索和CSV导出使用原文；盘口候选搜索也匹配已显示的中文。
 
 金融计算保持Decimal，逐档计算成本、手续费和缓冲。
 费用公式：股份数 × rate × p × (1-p)，当前仅支持指数1。
