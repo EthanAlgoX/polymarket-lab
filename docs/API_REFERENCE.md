@@ -1,6 +1,6 @@
 # API reference
 
-Implementation reviewed on **2026-10-03 (Asia/Shanghai)**, including English-first display and user-configurable LLM translation. This describes the checked-in contracts, not an assertion that every provider/platform was tested. Dated validation results are recorded in [FEATURE_EVALUATION.md](FEATURE_EVALUATION.md); [FUNCTIONAL_AUDIT.md](FUNCTIONAL_AUDIT.md) retains the earlier audit. Data comes directly from public Polymarket APIs; no HTML scraping or third-party trading SDK is used.
+Implementation reviewed on **2026-10-03 (Asia/Shanghai)**, including English-first display, user-configurable LLM translation, and current scanner diagnostics. This describes the checked-in contracts, not an assertion that every provider/platform was tested. Dated validation results are recorded in [FEATURE_EVALUATION.md](FEATURE_EVALUATION.md); [FUNCTIONAL_AUDIT.md](FUNCTIONAL_AUDIT.md) retains the earlier audit, and [UX_REDESIGN.md](UX_REDESIGN.md) explains the current workspace flows. Data comes directly from public Polymarket APIs; no HTML scraping or third-party trading SDK is used.
 
 ## Polymarket data sources
 
@@ -40,7 +40,7 @@ Official schema references: [Gamma list markets](https://docs.polymarket.com/api
 | `GET /api/inspect/{market_id}` | Recheck current Gamma trading state and original mapping, then fetch fresh books. `quantity`: default 100, range 1–100000; `extra_cost`: default 0.05, range 0–10000. Two distinct outcomes receive a cost estimate; larger outcome sets receive descriptive books only. |
 | `GET /api/markets` | Current bounded scanner selection with dynamic candidate/freshness checks. `limit`: default 50, range 1–200; `offset`: ≥0. |
 | `GET /api/markets/{market_id}` | Scanner calculation, Yes/No display books, analytics, and the separate REST calculation books. Unknown scanner market: 404. |
-| `GET /api/opportunities` | Current scanner results passing every candidate gate. An empty response describes this selection, not the entire platform. |
+| `GET /api/opportunities` | Current scanner results passing every candidate gate, plus `scanner_diagnostics` for that selected universe. Each item's top-level `calculation` matches `market.calculation`, including current quote age. An empty result describes this selection, not the entire platform. |
 | `GET /api/opportunities/history` | Persisted signal summaries. `limit`: default 100, range 1–500; `offset`: ≥0. |
 | `GET /api/opportunities/history/{opportunity_id}` | Full saved signal details and audit inputs; missing ID: 404. |
 | `POST /api/paper-trades` | Body `{ "market_id": "..." }`, ID length 1–64. Recheck a current scanner candidate under the refresh lock, then save a simulation. Missing, expired, or invalid snapshot: 409. Response includes `simulation_only: true`. |
@@ -48,7 +48,7 @@ Official schema references: [Gamma list markets](https://docs.polymarket.com/api
 | `GET /api/paper-trades/{trade_id}` | Full saved simulation details and audit inputs; missing ID: 404. |
 | `GET /api/settings`, `PUT /api/settings` | Read/write the five validated scanner parameters below. |
 | `GET /health` | Local database health; JSON 200 when healthy, 503 when degraded. This does not verify upstream data freshness. |
-| `GET /api/system/status` | Runtime/upstream/WS/database state, sample counts, current candidate count, catalog selection, and public HTTP counters. |
+| `GET /api/system/status` | Runtime/upstream/WS/database state, sample counts, current candidate count, catalog selection, `scanner_diagnostics`, and public HTTP counters. |
 | `GET /api/dashboard` | Runtime status, saved simulation count, and the sum of SUCCESS simulation estimates. The sum is not realized profit. |
 | `GET /api/logs` | Sanitized local events; `limit`: default 100, range 1–500. |
 | `GET /api/research` | Checked-in strategy/reference material; stars are a dated snapshot. |
@@ -77,6 +77,29 @@ Invalid request parameters return FastAPI validation errors (422). Built-in loca
 Analytics fields are Decimal strings or null: spread, midpoint, spread basis points, best-level sizes/imbalance/microprice, and bid/ask quantity/collateral within 0.02 of each best price. `quality` distinguishes normal, unavailable, one-sided, crossed, and invalid books. `stale` and `quote_age_seconds` independently describe freshness.
 
 Timestamp validation rejects missing, non-finite, non-positive, or more than one second future timestamps. Two-leg age uses the oldest REST source and conservative elapsed age. Clock rollback or unknown source time blocks candidates. Retained VALID/PARTIAL/FEE_UNKNOWN calculations are displayed as STALE once unknown or expired; structural invalid statuses retain priority. Missing minimum order size blocks candidates. `VALID` describes a complete mathematical estimate; `is_candidate` additionally requires current metadata, sources, size, and profit/ROI gates.
+
+### Current scanner diagnostics
+
+`/api/opportunities` and `/api/system/status` return `scanner_diagnostics`. Diagnostics reuse the actual eligibility checks; they do not loosen thresholds or create candidates. They describe the current bounded runtime selection, independently of the broader catalog and persisted signal history.
+
+| Field | Meaning |
+| --- | --- |
+| `selected_count` | Current number of selected Yes/No scanner markets. |
+| `calculated_count` | Selected markets with a retained calculation result, including rejected results. This is not a freshness count. |
+| `candidate_count` | Markets passing all gates at `checked_at`; `/api/opportunities.total` and the status endpoint's `opportunity_count` use this current assessment. |
+| `rejected_count` | `selected_count - candidate_count`, including markets still awaiting a calculation. |
+| `reason_counts` | Nonzero counts keyed by the first explanatory rejection reason. Each rejected market appears once, so these counts sum to `rejected_count`; several other gates may also fail. |
+| `checked_at` | UTC time when the response evaluates current eligibility. |
+| `calculation_as_of` | UTC local receipt time for the most recent scanner REST batch, or null. A recent receipt does not renew an old source timestamp. |
+| `thresholds` | Actual runtime `minimum_net_profit`, `minimum_net_roi`, `minimum_executable_quantity`, and `max_quote_age_seconds`, serialized as strings. Saved parameters may override startup defaults. |
+
+Reason codes include `AWAITING_CALCULATION`, `METADATA_UNVERIFIED`, `BOOKS_UNAVAILABLE`, `MARKET_RESOLVED`, `MARKET_UNAVAILABLE`, `QUOTE_TIME_UNKNOWN`, `STALE`, `MIN_ORDER_UNKNOWN`, `BELOW_MIN_ORDER`, `FEE_UNKNOWN`, `PARTIAL`, `BELOW_QUANTITY`, `BELOW_NET_PROFIT`, `BELOW_NET_ROI`, `INVALID_PARAMETERS`, and calculation rejection statuses such as `INVALID_BOOK`, `CROSSED_BOOK`, `INVALID_PAIR`, `INVALID_CALCULATION`, `NO_ASKS`, `NO_LIQUIDITY`, and `PARTIAL_NOT_ALLOWED`. Structural failures retain their explanatory status instead of presenting their zero-quantity sentinel as a minimum-size rejection. `ELIGIBLE` is counted as a candidate and never appears in `reason_counts`.
+
+An empty selection returns zero counts and an empty reason map. Distinguish deliberate offline mode (`live_scanner_enabled: false`), collection failure (upstream/error fields), uncalculated samples, and healthy samples with no qualifying edge. The web log pause control pauses browser rereading only; collection and persisted events continue.
+
+### Browser navigation to inspection
+
+`/#markets?inspect=MARKET_ID` is a browser hash link, not a server query parameter or a new API route. It opens the catalog inspection drawer and calls `/api/inspect/{market_id}`. Saved-record views can reopen that current inspection while retaining the original observation separately. A market no longer present in the current catalog returns 404; a saved historical record remains available. The link does not restore a past quote or submit an order.
 
 ### Parameters and persistence
 

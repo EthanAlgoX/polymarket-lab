@@ -10,9 +10,10 @@ const money = v => v == null ? '—' : '$'+(v>=1e6 ? n(v/1e6,2)+'M' : v>=1e3 ? n
 const price = v => v == null || !Number.isFinite(Number(v)) ? '—' : n(Number(v)*100,2)+'¢';
 const time = (v,dateOnly=false) => !v || !Number.isFinite(new Date(v).getTime()) ? '—' : new Date(v).toLocaleString(locale(),{timeZone:'Asia/Shanghai',hour12:false,...(dateOnly?{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}:{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'})});
 const safeUrl = v => {try{const u=new URL(v);return u.protocol==='https:'?escapeHtml(u.href):'#'}catch{return '#'}};
-const categoryLabel = key => ({all:t('All industries','全部行业'),sports:t('Sports','体育'),weather:t('Weather','天气'),crypto:t('Crypto','加密'),economy:t('Economy / finance','经济 / 金融'),politics:t('Politics / geopolitics','政治 / 地缘'),other:t('Other','其他')})[key]||message(key);
+const categoryLabel = key => ({all:t('All markets','全部市场'),sports:t('Sports','体育'),weather:t('Weather','天气'),crypto:t('Crypto','加密'),economy:t('Economy','经济'),politics:t('Politics','政治'),other:t('Other','其他')})[key]||message(key);
 const state={category:'all',search:'',sort:'volume24h',minLiquidity:0,offset:0,limit:40,view:'markets',repoFilter:'highstar',selected:null,quantity:100,extraCost:.05,catalogSequence:0,detailSequence:0};
-let currentData=null, currentStatus=null, currentDetail=null, researchData=null, timer=null, loadingDetail=false, detailQueued=false, catalogLoading=false, catalogAbort=null, detailAbort=null, detailOpener=null, catalogFailed=false, detailFailed=false, lastError=null, lastDetailError=null;
+let appliedCatalogState={category:'all',search:'',sort:'volume24h',minLiquidity:0,offset:0,limit:40};
+let currentData=null, currentStatus=null, currentDetail=null, researchData=null, timer=null, loadingDetail=false, detailQueued=false, catalogLoading=false, catalogAbort=null, detailAbort=null, detailOpener=null, catalogFailed=false, detailFailed=false, lastError=null, lastDetailError=null, lastResearchError=null, researchLoading=false;
 async function api(url, signal){
   const controller=new AbortController(), abort=()=>controller.abort();
   signal?.addEventListener('abort',abort,{once:true});
@@ -28,28 +29,40 @@ async function api(url, signal){
 function error(e){lastError=e;$('#banner').textContent=message(e.message);$('#banner').hidden=false;}
 function coverageText(data){
   if(data.liveScannerEnabled===false)return t('Local offline mode · public markets are not being collected','本地离线模式 · 未采集公开市场');
-  const statuses={loading:t('Discovering markets','正在发现'),sample:t('Initial sample','初始样本'),paginated:t('Event pagination complete','事件分页遍历完成'),partial:t('Partial coverage','部分覆盖'),capped:t('Traversal limit reached','达到本轮遍历上限')};
+  const statuses={loading:t('Discovering markets','正在发现'),sample:t('Initial sample','初始样本'),paginated:t('Catalog traversal complete','目录分页遍历完成'),partial:t('Partial coverage','部分覆盖'),capped:t('Coverage capped','已达覆盖上限')};
   return `${data.refreshing?t('Traversing event catalog','事件目录正在遍历'):statuses[data.coverage]||t('Catalog snapshot','目录快照')} · ${n(data.total,0)} ${t('markets accepting orders','个接单市场')}${data.pages?t(` · ${data.pages} pages read`,` · 已读取 ${data.pages} 页`):''}`;
 }
 function renderCatalogFailure(){
   $('#live-status').textContent=t('Connection error · retaining older snapshot','数据连接异常 · 保留旧快照');$('#live-status').className='status';
   if(currentData)$('#updated').textContent=t('Refresh failed · retained snapshot ','刷新失败 · 保留快照 ')+(currentData.revision??'—')+' · '+time(currentData.updatedAt);
+  else{$('#result-count').textContent=t('Market directory unavailable','市场目录暂时不可用');$('#market-rows').innerHTML=`<tr><td colspan="7" class="empty"><strong>${t('Could not load the market directory','未能加载市场目录')}</strong>${t('Check the runtime monitor, then refresh data to retry.','查看运行监控，然后刷新数据重试。')}</td></tr>`;}
+}
+function renderCatalogLoading(){
+  $('#market-surface')?.setAttribute?.('aria-busy',String(catalogLoading));
+  $('#catalog-loading').textContent=catalogLoading?t('Updating results…','正在更新结果…'):catalogFailed?t('Showing previous results. Refresh data to retry your filters.','正在显示先前结果。刷新数据可重试当前筛选。'):t('Prices are indicative. Inspect a book for executable depth.','展示价仅供参考；核验盘口可查看可成交深度。');
+  $('#previous').disabled=catalogLoading||catalogFailed||!currentData||appliedCatalogState.offset===0;
+  $('#next').disabled=catalogLoading||catalogFailed||!currentData||appliedCatalogState.offset+appliedCatalogState.limit>=currentData.filteredTotal;
 }
 async function loadCatalog(force=true){
   if(catalogLoading&&!force)return;
   const sequence=++state.catalogSequence;
   catalogAbort?.abort(); catalogAbort=new AbortController(); catalogLoading=true;
-  const params=new URLSearchParams({category:state.category,search:state.search,sort:state.sort,min_liquidity:state.minLiquidity,offset:state.offset,limit:state.limit});
+  const requested={category:state.category,search:state.search,sort:state.sort,minLiquidity:state.minLiquidity,offset:state.offset,limit:state.limit};
+  const params=new URLSearchParams({category:requested.category,search:requested.search,sort:requested.sort,min_liquidity:requested.minLiquidity,offset:requested.offset,limit:requested.limit});
+  renderCatalogLoading();
   try{
-    const [data,status]=await Promise.all([api('/api/catalog?'+params,catalogAbort.signal),api('/api/system/status',catalogAbort.signal)]);
+    const [catalogResult,statusResult]=await Promise.allSettled([api('/api/catalog?'+params,catalogAbort.signal),api('/api/system/status',catalogAbort.signal)]);
     if(sequence!==state.catalogSequence)return;
+    if(catalogResult.status==='rejected')throw catalogResult.reason;
+    const data=catalogResult.value,status=statusResult.status==='fulfilled'?statusResult.value:{};
     if(data.filteredTotal&&state.offset>=data.filteredTotal){state.offset=Math.floor((data.filteredTotal-1)/state.limit)*state.limit;loadCatalog();return;}
     if(!data.filteredTotal)state.offset=0;
+    appliedCatalogState={...requested,offset:state.offset};
     currentData=data;currentStatus=status;catalogFailed=false;lastError=null;$('#banner').hidden=true;
     if(data.error){$('#banner').textContent=t('Catalog refresh interrupted; showing the available snapshot: ','目录读取部分中断，当前显示已有快照：')+message(data.error);$('#banner').hidden=false;}
     renderCatalog(data,status);
   }catch(e){if(sequence!==state.catalogSequence)return;catalogFailed=true;error(e);renderCatalogFailure();}
-  finally{if(sequence===state.catalogSequence)catalogLoading=false;}
+  finally{if(sequence===state.catalogSequence){catalogLoading=false;renderCatalogLoading();}}
 }
 function scannerMixText(selection){
   if(!selection)return '';
@@ -64,27 +77,38 @@ function scannerMixText(selection){
 }
 function renderCatalog(data,status){
   $('#total').textContent=n(data.filteredTotal,0);$('#volume').textContent=money(data.filteredVolume24h);$('#liquidity').textContent=money(data.filteredLiquidity);$('#candidates').innerHTML=n(data.candidateCount,0)+'<em> / '+n(data.scannerCount,0)+'</em>';
-  $('#scan-scope').textContent=t(`${data.scannerCount} Yes/No samples · ${data.scannerRefreshSeconds}s`,`全部 ${data.scannerCount} 个 Yes/No 样本 · ${data.scannerRefreshSeconds}s`);
-  $('#total-scope').textContent=t('Current filters · ','当前筛选 · ')+categoryLabel(state.category);
+  $('#scan-scope').textContent=t(`Global Yes/No sample · Not filtered · ${data.scannerRefreshSeconds}s refresh`,`全局 Yes/No 样本 · 不随筛选 · ${data.scannerRefreshSeconds}s 刷新`);
+  $('#total-scope').textContent=categoryLabel(appliedCatalogState.category);
   $('#coverage').textContent=coverageText(data);$('#updated').textContent=t('Snapshot ','快照 ')+(data.revision??'—')+' · '+time(data.updatedAt)+' · '+t('Shanghai time','上海时间');$('#scanner-mix').textContent=scannerMixText(data.scannerSelection);
-  const healthy=status.gamma_status==='正常'&&status.clob_status==='正常';$('#live-status').textContent=data.liveScannerEnabled===false?t('Local offline mode','本地离线模式'):healthy?t('Public market data healthy','公开行情正常'):t('Order book connections not ready','盘口链路未就绪');$('#live-status').className='status'+(healthy?' live':'');
-  const max=Math.max(...data.categories.map(x=>x.volume24h),1);
-  $('#categories').innerHTML=data.categories.map(x=>`<button class="category ${state.category===x.id?'active':''}" data-category="${escapeHtml(x.id)}" aria-pressed="${state.category===x.id}" title="${escapeHtml(t(`${categoryLabel(x.id)}, 24-hour volume ${money(x.volume24h)}, ${x.count} markets`,`${categoryLabel(x.id)}，24 小时成交量 ${money(x.volume24h)}，${x.count} 个市场`))}"><span class="category-name">${escapeHtml(categoryLabel(x.id))}<span class="category-count">${n(x.count,0)}</span></span><b class="category-vol">${money(x.volume24h)}</b><span class="category-bar"><i style="width:${100*x.volume24h/max}%"></i></span><small>${t('Catalog-wide 24h volume','全目录 24h 成交量')}</small></button>`).join('');
-  $('#categories').querySelectorAll('[data-category]').forEach(b=>b.onclick=()=>{state.category=state.category===b.dataset.category?'all':b.dataset.category;state.offset=0;loadCatalog()});
-  $('#result-count').textContent=categoryLabel(state.category)+' · '+n(data.filteredTotal,0)+' '+t('markets','个市场');
-  $('#market-rows').innerHTML=data.items.length?data.items.map(m=>`<tr><td><button class="market-title" data-inspect="${escapeHtml(m.id)}">${marketText(m.question)}</button><span class="market-event" title="${escapeHtml(m.event)}">${marketText(m.event)}</span></td><td><span class="tag">${escapeHtml(categoryLabel(m.category))}</span></td><td><div class="outcomes">${m.outcomes.slice(0,2).map((label,i)=>`<span>${marketText(label)}<b>${price(m.prices[i])}</b></span>`).join('')}${m.outcomes.length>2?'<span>'+t(`${m.outcomes.length-2} more outcomes`,`还有 ${m.outcomes.length-2} 个结果`)+'</span>':''}</div></td><td class="numeric">${money(m.volume24h)}</td><td class="numeric">${money(m.liquidity)}</td><td class="deadline">${time(m.endDate,true)}</td><td><button class="inspect-link" data-inspect="${escapeHtml(m.id)}">${t('Inspect book','核验盘口')}</button></td></tr>`).join(''):`<tr><td colspan="7" class="empty">${t('No open markets match these filters. Clear the search or lower the liquidity threshold.','该筛选下没有开盘市场。可清空搜索或降低流动性条件。')}</td></tr>`;
-  $('#market-rows').querySelectorAll('[data-inspect]').forEach(b=>b.onclick=()=>openDetail(b.dataset.inspect));$('#page-info').textContent=data.filteredTotal?`${state.offset+1}–${Math.min(state.offset+state.limit,data.filteredTotal)} / ${n(data.filteredTotal,0)}`:'0 / 0';$('#previous').disabled=state.offset===0;$('#next').disabled=state.offset+state.limit>=data.filteredTotal;
+  const healthy=status.gamma_status==='正常'&&status.clob_status==='正常';$('#live-status').textContent=data.liveScannerEnabled===false?t('Local offline mode','本地离线模式'):healthy?t('Public market data healthy','公开行情正常'):!status.gamma_status&&!status.clob_status?t('Scanner status unavailable','扫描状态暂时不可用'):t('Order book connections not ready','盘口链路未就绪');$('#live-status').className='status'+(healthy?' live':'');
+  const categories=[{id:'all',count:data.total},...data.categories];
+  $('#categories').innerHTML=categories.map(x=>`<button class="category ${appliedCatalogState.category===x.id?'active':''}" data-category="${escapeHtml(x.id)}" aria-pressed="${appliedCatalogState.category===x.id}" title="${escapeHtml(t(`${categoryLabel(x.id)}: ${n(x.count,0)} catalog markets`,`${categoryLabel(x.id)}：目录共 ${n(x.count,0)} 个市场`))}">${escapeHtml(categoryLabel(x.id))}<span class="category-count">${n(x.count,0)}</span></button>`).join('');
+  $('#categories').querySelectorAll('[data-category]').forEach(b=>b.onclick=()=>{state.category=b.dataset.category;state.offset=0;loadCatalog()});
+  $('#result-count').textContent=categoryLabel(appliedCatalogState.category)+' · '+n(data.filteredTotal,0)+' '+t('markets','个市场');
+  $('#market-rows').innerHTML=data.items.length?data.items.map(m=>`<tr><td><button class="market-title" data-inspect="${escapeHtml(m.id)}">${marketText(m.question)}</button><span class="market-event" title="${escapeHtml(m.event)}">${marketText(m.event)}</span></td><td><span class="tag">${escapeHtml(categoryLabel(m.category))}</span></td><td><div class="outcomes">${m.outcomes.slice(0,2).map((label,i)=>`<span>${marketText(label)}<b>${price(m.prices[i])}</b></span>`).join('')}${m.outcomes.length>2?'<span>'+t(`${m.outcomes.length-2} more outcomes`,`还有 ${m.outcomes.length-2} 个结果`)+'</span>':''}</div></td><td class="numeric">${money(m.volume24h)}</td><td class="numeric">${money(m.liquidity)}</td><td class="deadline">${time(m.endDate,true)}</td><td><button class="inspect-link" data-inspect="${escapeHtml(m.id)}">${t('Inspect book','核验盘口')}</button></td></tr>`).join(''):`<tr><td colspan="7" class="empty"><strong>${data.liveScannerEnabled===false?t('No markets collected in offline mode','离线模式尚未采集市场'):t('No markets match these filters','没有符合筛选的市场')}</strong>${data.liveScannerEnabled===false?t('Enable live public-data collection to populate this directory. See Settings for runtime status.','启用公开数据采集后即可显示市场，运行状态可在设置页查看。'):t('Clear the search or lower the liquidity threshold to broaden the results.','清空搜索或降低流动性门槛，可以扩大结果范围。')}</td></tr>`;
+  $('#market-rows').querySelectorAll('[data-inspect]').forEach(b=>b.onclick=()=>openDetail(b.dataset.inspect));$('#page-info').textContent=data.filteredTotal?`${appliedCatalogState.offset+1}–${Math.min(appliedCatalogState.offset+appliedCatalogState.limit,data.filteredTotal)} / ${n(data.filteredTotal,0)}`:'0 / 0';renderCatalogLoading();
 }
-function renderViewHeading(){ $('h1').textContent={markets:t('Open markets','开盘市场'),strategies:t('Trading research','交易空间'),opensource:t('Open-source references','开源项目参考')}[state.view]; }
+function renderViewHeading(){ $('#page-title').textContent={markets:t('Open markets','开盘市场'),strategies:t('Research playbook','研究手册'),opensource:t('Open-source references','开源项目参考')}[state.view];$('#page-description').textContent={markets:t('Discover public markets and inspect their order books before assessing a price gap.','先发现公开市场，再核验订单簿并评估价格差额。'),strategies:t('Understand what is implemented and what still needs independent data and validation.','了解现有功能，以及仍需独立数据和验证的研究方向。'),opensource:t('Review source-backed ideas, adoption decisions and compatibility limits.','查看有源码依据的设计、采用决定与兼容性限制。')}[state.view];$('#refresh').hidden=state.view!=='markets';$('#live-status').hidden=state.view!=='markets'; }
 function setView(view){if(!['markets','strategies','opensource'].includes(view))view='markets';state.view=view;window.scrollTo({top:0});for(const v of ['markets','strategies','opensource'])$('#'+v+'-view').hidden=v!==view;document.querySelectorAll('[data-view]').forEach(b=>{const active=b.dataset.view===view;b.classList.toggle('active',active);if(active)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current')});renderViewHeading();}
 function renderResearch(){
   if(!researchData)return;
   $('#strategy-grid').innerHTML=researchData.strategies.categoryResearch.map(source=>{
     const s=english()?{...source,...window.ResearchCopy?.strategies[source.category]}:source;
-    return `<article class="strategy"><h3>${escapeHtml(s.category)}</h3><p class="priority">${escapeHtml(s.priority)}</p><p>${escapeHtml(s.signal)}</p><span class="field-label">${t('Required data','需要的数据')}</span><div class="requirements">${s.data.map(x=>`<span>${escapeHtml(x)}</span>`).join('')}</div><span class="field-label">${t('Failure points','容易失效的地方')}</span><p class="risk">${escapeHtml(s.failure)}</p><span class="field-label">${t('Next validation','下一步验证')}</span><p>${escapeHtml(s.validation)}</p><a href="${safeUrl(s.sources[0])}" target="_blank" rel="noopener">${t('View source','查看依据')}</a></article>`;
+    return `<article class="strategy"><div><h3>${escapeHtml(s.category)}</h3><p class="priority">${escapeHtml(s.priority)}</p></div><div><p class="strategy-signal">${escapeHtml(s.signal)}</p><div class="strategy-fields"><div><span class="field-label">${t('Required data','需要的数据')}</span><ul class="requirements">${s.data.map(x=>`<li>${escapeHtml(x)}</li>`).join('')}</ul></div><div><span class="field-label">${t('Failure points','容易失效的地方')}</span><p class="risk">${escapeHtml(s.failure)}</p><span class="field-label">${t('Next validation','下一步验证')}</span><p class="validation">${escapeHtml(s.validation)}</p></div></div><div class="repo-evidence">${s.sources.map((url,index)=>`<a href="${safeUrl(url)}" target="_blank" rel="noopener">${t('Source','依据')} ${index+1} ↗</a>`).join('')}</div></div></article>`;
   }).join('');renderRepos();
 }
-async function loadResearch(){try{researchData=await api('/api/research');renderResearch();$('#repo-filters').querySelectorAll('[data-repo-filter]').forEach(button=>button.onclick=()=>{state.repoFilter=button.dataset.repoFilter;renderRepos();});}catch(e){error(e);}}
+function renderResearchFailure(){
+  const html=`<div class="research-empty"><strong>${t('Research references unavailable','研究参考暂时不可用')}</strong><p>${escapeHtml(message(lastResearchError?.message||''))}</p><button class="subtle" data-retry-research>${t('Retry loading references','重新加载参考资料')}</button></div>`;
+  $('#strategy-grid').innerHTML=html;$('#repo-grid').innerHTML=html;
+  document.querySelectorAll('[data-retry-research]').forEach(button=>button.onclick=loadResearch);
+}
+async function loadResearch(){
+  if(researchLoading)return;researchLoading=true;
+  document.querySelectorAll('[data-retry-research]').forEach(button=>button.disabled=true);
+  try{researchData=await api('/api/research');lastResearchError=null;renderResearch();$('#repo-filters').querySelectorAll('[data-repo-filter]').forEach(button=>button.onclick=()=>{state.repoFilter=button.dataset.repoFilter;renderRepos();});}
+  catch(e){lastResearchError=e;renderResearchFailure();}
+  finally{researchLoading=false;}
+}
 function renderRepos(){
   if(!researchData)return;
   const github=researchData.github,threshold=github.highStarReview?.threshold||200;
@@ -97,21 +121,45 @@ function renderRepos(){
     const review=repo.review||{},copy=english()?window.ResearchCopy?.repos[repo.id]:null;
     const learn=copy?.learn||[copy?.description].filter(Boolean);const displayedLearn=english()&&learn.length?learn:review.learn||[repo.descriptionZh];
     const limits=copy?.limits||(review.limits||repo.cautions||[]),decision=copy?.decision||review.decision||t('Research reference; no source code integrated','研究参考；未集成代码'),evidence=review.sources||repo.sources||[];
-    return `<article class="repo"><div class="repo-top"><h3>${escapeHtml(repo.id)}</h3><span class="tag">${repo.archived?t('Archived','已归档'):repo.official?t('Official','官方'):t('Community','社区')}</span></div><div class="repo-meta"><span class="repo-stars">${n(repo.stars,0)} stars</span> · ${escapeHtml(repo.language||'—')} · ${escapeHtml(repo.licenseVerified?repo.license:t('License not fully verified','许可未完整核验'))}<br>${t('Last code push','最近代码推送')} ${escapeHtml((repo.updatedAt||'').slice(0,10))}</div><ul>${displayedLearn.map(item=>`<li>${escapeHtml(item)}</li>`).join('')}</ul><p class="repo-decision">${escapeHtml(decision)}</p><p class="cautions">${limits.map(escapeHtml).join(' ')}</p><div class="repo-evidence"><a href="${safeUrl(repo.url)}" target="_blank" rel="noopener">${t('GitHub repository','GitHub 仓库')}</a>${evidence[0]?`<a href="${safeUrl(evidence[0])}" target="_blank" rel="noopener">${t('Source evidence','源码依据')}</a>`:''}</div></article>`;
+    return `<article class="repo"><div class="repo-identity"><h3>${escapeHtml(repo.id)}</h3><span class="repo-stars">${n(repo.stars,0)} stars</span><div class="repo-meta"><span>${escapeHtml(repo.language||'—')}</span><span>${escapeHtml(repo.licenseVerified?repo.license:t('License not fully verified','许可未完整核验'))}</span><span>${t('Last code push','最近代码推送')} ${escapeHtml((repo.updatedAt||'').slice(0,10))}</span></div><div class="repo-kind"><span class="tag">${repo.archived?t('Archived','已归档'):repo.official?t('Official','官方'):t('Community','社区')}</span></div></div><div><span class="field-label">${t('Useful ideas','可以借鉴的设计')}</span><ul>${displayedLearn.map(item=>`<li>${escapeHtml(item)}</li>`).join('')}</ul><p class="repo-decision"><strong>${t('Adoption decision','采用决定')}</strong>${escapeHtml(decision)}</p><details class="repo-review-details"><summary>${t('Limitations and source evidence','限制与源码依据')}</summary><p class="cautions">${limits.map(escapeHtml).join(' ')||t('No additional limitation recorded in this review.','本次评审未另行记录限制。')}</p><div class="repo-evidence">${evidence.map((url,index)=>`<a href="${safeUrl(url)}" target="_blank" rel="noopener">${t('Source evidence','源码依据')} ${index+1} ↗</a>`).join('')}</div></details><div class="repo-evidence"><a href="${safeUrl(repo.url)}" target="_blank" rel="noopener">${t('GitHub repository','GitHub 仓库')} ↗</a></div></div></article>`;
   }).join('')||`<p class="empty">${t('No projects match this filter. Show all research references.','该筛选下暂无项目，可切换到全部研究参考。')}</p>`;
 }
-function openDetail(id){
+function routeFromHash(hash){
+  const value=String(hash||'').replace(/^#/,'');
+  const separator=value.indexOf('?');
+  const view=separator===-1?value:value.slice(0,separator);
+  const parameters=new URLSearchParams(separator===-1?'':value.slice(separator+1));
+  return {view:['markets','strategies','opensource'].includes(view)?view:'markets',inspect:view==='markets'?parameters.get('inspect'):null};
+}
+function updateInspectionAddress(id){
+  if(!window.history?.replaceState)return;
+  const route=routeFromHash(location.hash);
+  const parameters=new URLSearchParams(String(location.hash||'').split('?').slice(1).join('?'));
+  if(id)parameters.set('inspect',id);else parameters.delete('inspect');
+  const hash=route.view+(parameters.size?'?'+parameters.toString():'');
+  window.history.replaceState(null,'',location.pathname+location.search+'#'+hash);
+}
+function applyRoute(){
+  const route=routeFromHash(location.hash);setView(route.view);
+  if(route.inspect){if(state.selected!==route.inspect)openDetail(route.inspect,false);}
+  else if(state.selected)closeDetail(false);
+}
+function setShellInert(inert){
+  for(const selector of ['.site-content','.site-rail','.site-topbar']){const node=$(selector);if(node)node.inert=inert;}
+}
+function openDetail(id,updateAddress=true){
   detailOpener=document.activeElement;state.selected=id;state.detailSequence++;currentDetail=null;detailFailed=false;lastDetailError=null;
+  if(updateAddress)updateInspectionAddress(id);
   $('#drawer').hidden=false;$('#drawer-shade').hidden=false;
-  document.querySelector('.site-content').inert=true;document.querySelector('.site-rail').inert=true;
+  $('#drawer').scrollTop=0;setShellInert(true);
   document.body.style.overflow='hidden';$('#detail-body').innerHTML=`<div class="empty">${t('Loading actual bids and asks…','正在读取实际买卖盘…')}</div>`;
   $('#close-drawer').focus();loadDetail(true);
 }
-function closeDetail(){
+function closeDetail(cleanAddress=true){
   if(!state.selected)return;
   state.selected=null;currentDetail=null;state.detailSequence++;detailAbort?.abort();detailQueued=false;
   $('#drawer').hidden=true;$('#drawer-shade').hidden=true;
-  document.querySelector('.site-content').inert=false;document.querySelector('.site-rail').inert=false;
+  setShellInert(false);if(cleanAddress)updateInspectionAddress(null);
   document.body.style.overflow='';
   if(detailOpener?.isConnected)detailOpener.focus();else document.querySelector('#market-rows [data-inspect]')?.focus();
 }
@@ -132,7 +180,7 @@ function calcHtml(m){
   else if(c.status==='BELOW_MIN_ORDER')verdict=t('Below minimum order size','低于最小订单数量');
   else if(c.status==='STALE')verdict=t('Stale order book; assessment paused','盘口过期，暂停判断');
   else if(c.status==='PARTIAL')verdict=t('Insufficient depth; only a partial quantity can be calculated','深度不足，仅能计算部分数量');
-  else if(Number(c.net_profit)>0&&c.status==='VALID')verdict=t('Positive gap candidate; verify execution of both legs','正差额候选，需核验双腿执行');
+  else if(Number(c.net_profit)>0&&c.status==='VALID')verdict=t('Positive estimated gap; scanner thresholds still need checking','估算差额为正；仍需核对扫描门槛');
   const negative=!(c.status==='VALID'&&Number(c.net_profit)>0);
   return `<div class="calc"><div class="verdict ${negative?'negative':''}">${verdict}</div><dl><dt>${t('Common executable quantity','共同可成交量')}</dt><dd>${n(c.executable_quantity)} / ${n(c.target_quantity)} ${t('shares','股')}</dd><dt>${t('Two-leg cost across price levels','两腿逐档成本')}</dt><dd>${n(c.total_cost,5)} pUSD</dd><dt>${t('Theoretical complete-set recovery','完整集理论回收')}</dt><dd>${n(c.settlement_value,5)} pUSD</dd><dt>${t('Level-by-level estimated fees','逐档估算手续费')}</dt><dd>${c.estimated_fees===null?t('Unknown','未知'):n(c.estimated_fees,5)+' pUSD'}</dd><dt>${t('Slippage buffer','滑点缓冲')}</dt><dd>${n(c.slippage_buffer,5)} pUSD</dd><dt>${t('Safety buffer','安全缓冲')}</dt><dd>${n(c.safety_buffer,5)} pUSD</dd><dt>${t('Additional cost assumption','其他成本假设')}</dt><dd>${n(c.extra_cost,5)} pUSD</dd><dt class="net">${t('Estimated net gap','估算净差额')}</dt><dd class="net">${c.net_profit===null?'—':n(c.net_profit,5)+' pUSD'}</dd><dt>${t('Net ROI on total budget','按总预算计的净收益率')}</dt><dd>${c.net_roi==null?'—':n(Number(c.net_roi)*100,3)+'%'}</dd></dl><p>${t('Both legs execute independently. Additional cost is an adjustable assumption; merge and on-chain costs have not been measured. Fees use the formula returned by Gamma for this market. Minimum order size: ','两腿成交独立；其他成本是可调整假设，尚未实测合并或链上成本。费用基于本次 Gamma 接口返回的费率公式。最小订单 ')}${n(m.minimumOrderSize)} ${t('shares.','股。')}</p></div>`;
 }
@@ -142,7 +190,7 @@ function renderDetail(m,full=false,preserveInputs=false){
   const activeInput=existingInputs.find(({input})=>input===document.activeElement)?.input;
   if(full||!$('#detail-live')){
     const rulesOpen=$('#detail-body').querySelector('details')?.open||false;
-    $('#detail-body').innerHTML=`<h3>${marketText(m.question)}</h3><div class="detail-meta"><span>${escapeHtml(categoryLabel(m.category))} · ${m.negRisk?t('NegRisk condition','NegRisk 条件'):t('Standard condition','标准条件')}</span><span id="detail-time"></span></div><div class="drawer-links"><a href="https://polymarket.com/event/${encodeURIComponent(m.slug)}" target="_blank" rel="noopener">${t('Original market and rules','原始市场与规则')}</a><a href="https://docs.polymarket.com/trading/fees" target="_blank" rel="noopener">${t('Fee documentation','费用说明')}</a></div><div class="params"><label>${t('Target shares per leg','每腿目标股数')}<input id="quantity" type="number" min="1" max="100000" step="any" required value="${escapeHtml(state.quantity)}"></label><label>${t('Additional cost / pUSD','其他成本 / pUSD')}<input id="extra-cost" type="number" min="0" max="10000" step="any" required value="${escapeHtml(state.extraCost)}"></label></div><div id="detail-live"></div><div class="detail-disclosure">${t('Displayed prices do not guarantee execution. Complete-set recovery requires resolution or merging; summing prices across unrelated events or multiple outcomes does not establish arbitrage.','展示价格不保证成交。完整集的回收需结算或合并；跨事件与多选结果不能仅因价格相加便认定套利。')}</div><p class="translation-note">${t('Chinese market text is machine-translated. Original English rules determine settlement. Select English to read the source.','中文为机器翻译，结算以英文原文为准。切换 English 可查看原文。')}</p><details${rulesOpen?' open':''}><summary>${t('Settlement rules','结算规则')}</summary><div class="rules">${m.description?marketText(m.description):t('Public API did not provide settlement rules','公开接口未提供规则')}</div></details>`;
+    $('#detail-body').innerHTML=`<h3>${marketText(m.question)}</h3><div class="detail-meta"><span>${escapeHtml(categoryLabel(m.category))} · ${m.negRisk?t('NegRisk condition','NegRisk 条件'):t('Standard condition','标准条件')}</span><span id="detail-time"></span></div><p class="preview-note">${t('Current public-data inspection. This preview does not apply scanner thresholds or save a paper record. Historical records retain their original snapshots.','当前公开数据核验。此预览不应用扫描门槛，也不保存纸面记录。历史记录保留原始快照。')}</p><div class="drawer-links"><a href="https://polymarket.com/event/${encodeURIComponent(m.slug)}" target="_blank" rel="noopener">${t('Original market and rules','原始市场与规则')} ↗</a><a href="https://docs.polymarket.com/trading/fees" target="_blank" rel="noopener">${t('Fee documentation','费用说明')} ↗</a><a href="/opportunities">${t('Book scanner and paper observations','盘口扫描与纸面观察')} →</a></div><p class="params-legend">${t('Complete-set cost assumptions','完整集成本假设')}</p><div class="params"><label>${t('Target shares per leg','每腿目标股数')}<input id="quantity" type="number" min="1" max="100000" step="any" required value="${escapeHtml(state.quantity)}"></label><label>${t('Additional cost / pUSD','其他成本 / pUSD')}<input id="extra-cost" type="number" min="0" max="10000" step="any" required value="${escapeHtml(state.extraCost)}"></label></div><div id="detail-live"></div><div class="detail-disclosure">${t('Displayed prices do not guarantee execution. Complete-set recovery requires resolution or merging; summing prices across unrelated events or multiple outcomes does not establish arbitrage.','展示价格不保证成交。完整集的回收需结算或合并；跨事件与多选结果不能仅因价格相加便认定套利。')}</div><p class="translation-note">${t('Chinese market text is machine-translated. Original English rules determine settlement.','中文为机器翻译，结算以英文原文为准。')}</p><details${rulesOpen?' open':''}><summary>${t('Settlement rules','结算规则')}</summary><div class="rules">${m.description?marketText(m.description):t('Public API did not provide settlement rules','公开接口未提供规则')}</div></details>`;
     $('#quantity').onchange=e=>{const v=Number(e.target.value);if(Number.isFinite(v)&&v>=1&&v<=100000&&e.target.checkValidity()){state.quantity=e.target.value;state.detailSequence++;loadDetail(false);}};
     $('#extra-cost').onchange=e=>{const v=Number(e.target.value);if(Number.isFinite(v)&&v>=0&&v<=10000&&e.target.checkValidity()){state.extraCost=e.target.value;state.detailSequence++;loadDetail(false);}};
     existingInputs.forEach(({selector,input})=>{
@@ -178,10 +226,11 @@ window.addEventListener('site-language-change',()=>{
   if(catalogFailed)renderCatalogFailure();
   if(lastError)error(lastError);
   renderResearch();
+  if(lastResearchError)renderResearchFailure();
   if(state.selected&&currentDetail){renderDetail(currentDetail,true,true);if(detailFailed)renderDetailFailure();}
   else if(state.selected){$('#detail-body').innerHTML=lastDetailError?`<div class="detail-error">${escapeHtml(message(lastDetailError.message))}</div>`:`<div class="empty">${t('Loading actual bids and asks…','正在读取实际买卖盘…')}</div>`;}
 });
-document.addEventListener('DOMContentLoaded',()=>{document.querySelectorAll('[data-view]').forEach(b=>b.onclick=e=>{e.preventDefault();setView(b.dataset.view);if(location.hash!==`#${b.dataset.view}`)location.hash=b.dataset.view;});window.addEventListener('hashchange',()=>setView(location.hash.slice(1)));setView(location.hash.slice(1));$('#search').oninput=e=>{clearTimeout(timer);timer=setTimeout(()=>{state.search=e.target.value;state.offset=0;loadCatalog();},250);};$('#sort').onchange=e=>{state.sort=e.target.value;state.offset=0;loadCatalog();};$('#min-liquidity').onchange=e=>{state.minLiquidity=Number(e.target.value);state.offset=0;loadCatalog();};$('#reset').onclick=()=>{state.category='all';state.search='';state.offset=0;state.minLiquidity=0;state.sort='volume24h';$('#search').value='';$('#min-liquidity').value='0';$('#sort').value='volume24h';loadCatalog();};$('#previous').onclick=()=>{state.offset=Math.max(0,state.offset-state.limit);loadCatalog();};$('#next').onclick=()=>{state.offset+=state.limit;loadCatalog();};$('#refresh').onclick=()=>{loadCatalog();loadDetail(true);};$('#close-drawer').onclick=closeDetail;$('#refresh-detail').onclick=()=>loadDetail(true);$('#drawer-shade').onclick=closeDetail;document.addEventListener('keydown',e=>{
+document.addEventListener('DOMContentLoaded',()=>{document.querySelectorAll('[data-view]').forEach(b=>b.onclick=e=>{e.preventDefault();const hash=`#${b.dataset.view}`;if(location.hash!==hash)location.hash=hash;else applyRoute();});window.addEventListener('hashchange',applyRoute);applyRoute();$('#search').oninput=e=>{clearTimeout(timer);timer=setTimeout(()=>{state.search=e.target.value;state.offset=0;loadCatalog();},250);};$('#sort').onchange=e=>{state.sort=e.target.value;state.offset=0;loadCatalog();};$('#min-liquidity').onchange=e=>{state.minLiquidity=Number(e.target.value);state.offset=0;loadCatalog();};$('#reset').onclick=()=>{state.category='all';state.search='';state.offset=0;state.minLiquidity=0;state.sort='volume24h';$('#search').value='';$('#min-liquidity').value='0';$('#sort').value='volume24h';loadCatalog();};$('#previous').onclick=()=>{state.offset=Math.max(0,appliedCatalogState.offset-state.limit);loadCatalog();};$('#next').onclick=()=>{state.offset=appliedCatalogState.offset+state.limit;loadCatalog();};$('#refresh').onclick=()=>{loadCatalog();loadDetail(true);};$('#close-drawer').onclick=()=>closeDetail();$('#refresh-detail').onclick=()=>loadDetail(true);$('#drawer-shade').onclick=()=>closeDetail();document.addEventListener('keydown',e=>{
   if(!state.selected)return;
   if(e.key==='Escape'){e.preventDefault();closeDetail();}
   if(e.key==='Tab'){

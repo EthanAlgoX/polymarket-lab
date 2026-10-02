@@ -1,27 +1,205 @@
-.book-quality{margin:24px 0;padding-top:20px;border-top:1px solid var(--line);min-width:0}
-.book-quality h3{font-size:16px;margin:0 0 10px}
-.book-quality p{font-size:14px;line-height:1.7;color:var(--muted);margin:10px 0;max-width:70ch}
-.book-quality table{min-width:580px;width:100%;font-size:14px}
-.book-quality th,.book-quality td{padding:12px 10px;vertical-align:top;text-align:left;font-variant-numeric:tabular-nums}
-.book-quality tbody th{font-weight:500;max-width:180px;overflow-wrap:anywhere}
-.book-quality td small{display:block;color:var(--muted);font-size:12px;white-space:normal;margin-top:4px;max-width:190px}
-.book-quality .table-wrap{overflow-x:auto}
-.scanner-mix{margin:0 0 24px;color:var(--muted);font-size:14px;line-height:1.7}
-.repo-review-meta{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:14px;margin:0 0 22px}
-.repo-review-controls{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 18px}
-.repo-review-controls button{background:transparent;border:1px solid var(--line);border-radius:5px;color:var(--muted);padding:9px 14px;font:inherit;font-size:14px;cursor:pointer}
-.repo-review-controls button[aria-pressed=true]{background:#1a2c44;border-color:#527da4;color:var(--text)}
-.repo-grid .repo h3{overflow-wrap:anywhere;min-width:0}
-.repo-grid .repo .repo-top{align-items:flex-start}
-.repo-grid .repo .repo-top .tag{flex-shrink:0}
-.repo-stars{font-variant-numeric:tabular-nums;color:var(--text);font-weight:600}
-.repo-grid .repo ul{padding-left:19px;font-size:14px;color:#becbdc;line-height:1.8;margin:12px 0}
-.repo-decision{font-size:14px;color:var(--green);margin:14px 0 8px}
-.repo-evidence{display:flex;flex-wrap:wrap;gap:14px}
-.http-metrics{display:flex;gap:12px 24px;flex-wrap:wrap;color:var(--muted);font-size:14px;margin-top:20px}
-.http-metrics b{color:var(--text);font-weight:500;font-variant-numeric:tabular-nums}
-@media(max-width:760px){.book-quality table{min-width:540px}.repo-review-meta{display:block}.repo-review-meta span{display:block;margin-bottom:7px}.repo-review-controls button{flex:1}.repo-grid .repo{padding:18px}.book-quality th,.book-quality td{padding:10px 8px}}
-@media(max-width:480px){main.site-content>header{flex-direction:column;align-items:flex-start;gap:16px}.header-right{width:100%;justify-content:space-between;flex-wrap:wrap}}
-.snapshot-state{margin:0 0 16px;color:var(--muted);font-size:12px}.snapshot-state:empty{display:none}.record-pagination{display:flex;justify-content:space-between;gap:12px;align-items:center;color:var(--muted);font-size:13px}.record-pagination>div{display:flex;gap:9px}.button:disabled{opacity:.5;cursor:default}
-.drawer-actions{display:flex;gap:8px}
-.calculation-source{margin-top:20px;font-size:13px}.calculation-source summary{cursor:pointer;color:var(--muted)}.calculation-source h3{font-size:14px;margin:15px 0 7px}.calculation-source p{font-size:12px}.calculation-source table{min-width:0}.form-actions span[data-state="dirty"],.form-actions span[data-state="pending"]{color:var(--muted)}.form-actions span[data-state="error"]{color:var(--red)}
+.book-quality {
+  margin:24px 0;
+  padding-top:20px;
+  border-top:1px solid var(--line);
+  min-width:0;
+}
+
+.book-quality h3 {
+  font-size:15px;
+  margin:0 0 10px;
+}
+
+.book-quality p {
+  font-size:12px;
+  line-height:1.8;
+  color:var(--muted);
+  margin:10px 0;
+  max-width:75ch;
+}
+
+.book-quality table {
+  min-width:560px;
+  width:100%;
+  font-size:12px;
+}
+
+.book-quality th,.book-quality td {
+  padding:11px 10px;
+  vertical-align:top;
+  text-align:left;
+  font-variant-numeric:tabular-nums;
+}
+
+.book-quality tbody th {
+  font-weight:500;
+  max-width:180px;
+  overflow-wrap:anywhere;
+}
+
+.book-quality td small {
+  display:block;
+  color:var(--muted);
+  font-size:11px;
+  white-space:normal;
+  margin-top:4px;
+  max-width:190px;
+}
+
+.book-quality .table-wrap {
+  overflow-x:auto;
+}
+
+.scanner-mix {
+  margin:0 0 12px;
+  color:var(--muted);
+  font-size:12px;
+  line-height:1.8;
+  max-width:85ch;
+}
+
+.repo-review-meta {
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+  color:var(--muted);
+  font-size:12px;
+  margin:0 0 18px;
+}
+
+.repo-review-controls {
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  margin:0 0 20px;
+}
+
+.repo-review-controls button {
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:6px;
+  color:var(--muted);
+  padding:8px 12px;
+  font:inherit;
+  font-size:12px;
+  cursor:pointer;
+}
+
+.repo-review-controls button:hover {
+  background:var(--surface2);
+  color:var(--text);
+}
+
+.repo-review-controls button[aria-pressed=true] {
+  background:#e6f2ee;
+  border-color:#bedcd2;
+  color:var(--accent);
+}
+
+.http-metrics {
+  display:flex;
+  gap:10px 24px;
+  flex-wrap:wrap;
+  color:var(--muted);
+  font-size:12px;
+  margin-top:18px;
+}
+
+.http-metrics b {
+  color:var(--text);
+  font-weight:550;
+  font-variant-numeric:tabular-nums;
+}
+
+.snapshot-state {
+  margin:0 0 16px;
+  color:var(--muted);
+  font-size:12px;
+}
+
+.snapshot-state:empty {
+  display:none;
+}
+
+.record-pagination {
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  align-items:center;
+  color:var(--muted);
+  font-size:12px;
+}
+
+.record-pagination>div {
+  display:flex;
+  gap:8px;
+}
+
+.button:disabled {
+  opacity:.5;
+  cursor:default;
+}
+
+.drawer-actions {
+  display:flex;
+  gap:8px;
+}
+
+.calculation-source {
+  margin-top:20px;
+  font-size:12px;
+}
+
+.calculation-source summary {
+  cursor:pointer;
+  color:var(--muted);
+}
+
+.calculation-source h3 {
+  font-size:14px;
+  margin:15px 0 7px;
+}
+
+.calculation-source p {
+  font-size:12px;
+  line-height:1.8;
+}
+
+.calculation-source table {
+  min-width:0;
+}
+
+.form-actions span[data-state="dirty"],.form-actions span[data-state="pending"] {
+  color:var(--muted);
+}
+
+.form-actions span[data-state="error"] {
+  color:var(--red);
+}
+
+@media(max-width:760px) {
+  .book-quality table {
+    min-width:520px;
+  }
+  .repo-review-meta {
+    display:grid;
+    gap:5px;
+  }
+  .repo-review-controls {
+    gap:6px;
+  }
+  .repo-review-controls button {
+    flex:1;
+    min-width:115px;
+  }
+  .book-quality th,.book-quality td {
+    padding:10px 8px;
+  }
+  .record-pagination {
+    align-items:flex-start;
+  }
+  .record-pagination>div {
+    flex-shrink:0;
+  }
+}

@@ -234,9 +234,8 @@ async def system_status(request: Request) -> dict[str, Any]:
     status["public_http"] = rt.http.metrics()
     status["live_scanner_enabled"] = rt.settings.enable_live_scanner
     status["scanner_selection"] = dict(rt.catalog.snapshot.scanner_selection)
-    status["opportunity_count"] = sum(
-        rt.valid_opportunity(rt.markets[mid], result) for mid, result in rt.results.items() if mid in rt.markets
-    )
+    status["scanner_diagnostics"] = rt.scanner_diagnostics()
+    status["opportunity_count"] = status["scanner_diagnostics"]["candidate_count"]
     return status
 
 
@@ -290,13 +289,15 @@ async def market_api(market_id: str, request: Request) -> dict[str, Any]:
 @app.get("/api/opportunities")
 async def opportunities_api(request: Request) -> dict[str, Any]:
     rt = runtime(request)
+    observed_at = datetime.now(UTC)
     items = []
     for market_id, result in rt.results.items():
-        if market_id in rt.markets and rt.valid_opportunity(rt.markets[market_id], result):
-            items.append(
-                {"market": rt.market_payload(rt.markets[market_id]), "calculation": result.model_dump(mode="json")}
-            )
-    return register_translation_text(request, {"total": len(items), "items": items})
+        if market_id in rt.markets and rt.valid_opportunity(rt.markets[market_id], result, now=observed_at):
+            market = rt.market_payload(rt.markets[market_id], now=observed_at)
+            items.append({"market": market, "calculation": market["calculation"]})
+    return register_translation_text(
+        request, {"total": len(items), "items": items, "scanner_diagnostics": rt.scanner_diagnostics(now=observed_at)}
+    )
 
 
 @app.get("/api/opportunities/history")

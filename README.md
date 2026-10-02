@@ -8,7 +8,7 @@ The website starts in **English**. To use Chinese, configure your own translatio
 
 **An estimate is not a fill.** Mathematical `VALID`, positive estimated difference, and passing every current scanner gate are separate results. Zero candidates can be a healthy outcome. Sports/weather/crypto strategy pages and high-star repositories are dated research references; they do not provide validated predictions or guaranteed income.
 
-Follow the A–E acceptance stages below. [FEATURE_EVALUATION.md](docs/FEATURE_EVALUATION.md) records actual execution evidence separately from mocked/synthetic cases and untested platforms. Detailed contracts: [API](docs/API_REFERENCE.md), [calculation](docs/CALCULATION.md), [architecture](docs/ARCHITECTURE.md), [functional audit](docs/FUNCTIONAL_AUDIT.md), [open-source review](docs/OPEN_SOURCE_REVIEW.md).
+Follow the A–E acceptance stages below. [FEATURE_EVALUATION.md](docs/FEATURE_EVALUATION.md) records actual execution evidence separately from mocked/synthetic cases and untested platforms. The [workspace redesign](docs/UX_REDESIGN.md) maps the current workflow and its usability fixes. Detailed contracts: [API](docs/API_REFERENCE.md), [calculation](docs/CALCULATION.md), [architecture](docs/ARCHITECTURE.md), [functional audit](docs/FUNCTIONAL_AUDIT.md), [open-source review](docs/OPEN_SOURCE_REVIEW.md).
 
 ![English workspace. Market counts and prices are live snapshots.](docs/images/overview-en.png)
 
@@ -107,7 +107,7 @@ Process environment overrides `.env` for startup settings. **Five saved UI param
 
 ## Language and your translation API
 
-The language switch changes both the interface and displayed market text. English shows the official source text and does not request LLM translations. The first visit defaults to English; the site remembers an explicit language choice. Chinese requires a configured backend API key, even if some translations were previously cached.
+The shared header language switch changes both the interface and displayed market text across every page. English shows the official source text and does not request LLM translations. The first visit defaults to English; the site remembers an explicit language choice. Chinese requires a configured backend API key, even if some translations were previously cached.
 
 1. Open **Settings → Translation API**.
 2. Choose **DeepSeek**, with `https://api.deepseek.com` and the default `deepseek-flash`, or **OpenAI-compatible** with your provider's public HTTPS API base and model name.
@@ -134,19 +134,21 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Initial public requests run
 - [ ] [Monitor](http://127.0.0.1:8000/monitor) shows Gamma/CLOB status, REST update time, actual scanner size, WS state, errors and HTTP counters. WS connection alone does not make a calculation current.
 - [ ] Catalog reports coverage, revision, update time and selection diagnostics. `capped` means the crawl reached its limit; `partial`/errors mean it was interrupted and may retain an older snapshot.
 
+The sidebar follows the research workflow: **Discover** groups Markets, Strategies and Open source; **Observe** groups Book scanner, Paper records and Signal history; **Workspace** groups Monitor, Settings and Logs. Start with a market, inspect the evidence, then save and revisit an observation. The narrow-screen menu retains all nine destinations and closes with Escape.
+
 | Sidebar entry | Do this | Expected behavior |
 | --- | --- | --- |
 | Markets | Select a category; search original title/event text; change liquidity/sort; paginate; reset | Counts/rows use one directory revision. “Refresh data” reads the server snapshot; it does not force a new whole-site crawl. |
 | Strategies | Read a category's signal, required inputs, failure cases and source | Research guidance. No external weather feed, sports odds, calibrated model or live predictive decision is supplied. |
 | Open source | Switch high-star / active high-star / all filters; open source links | Stars/maintenance/license/adoption decisions are a dated checked-in snapshot. High stars do not establish profit or current compatibility. |
-| Book scanner | Search candidates; open detail; save a qualifying simulation | Only current selected Yes/No markets passing all gates. Auto-refresh preserves search. |
-| Monitor | Compare upstream/database state, timestamps, counts and retries | Local health, public connectivity and book freshness are independent. Estimated simulation total is not realized profit. |
-| Paper records | Refresh, page through saved observations, export | 100 rows/page; saved estimates do not change with new prices. Empty history is valid. |
-| Signal history | Compare first/last seen, max estimate and active/disappeared state | Past signals; status is not permission to execute now. 100 rows/page. |
+| Book scanner | Read sample/calculation/candidate counts and rejection reasons; search candidates; inspect; save a qualifying observation | Only current selected Yes/No markets passing all gates. Auto-refresh preserves search; zero candidates has a sample-specific explanation. |
+| Monitor | Compare upstream/database state, timestamps, counts and retries | Local health, public connectivity and book freshness are independent. Repeated/overlapping paper estimates do not represent portfolio or realized profit. |
+| Paper records | Refresh, page through saved observations, open audit details or current inspection, export | 100 rows/page; saved estimates do not change with new prices. Missing audit data in older records is explicit. |
+| Signal history | Compare first/last seen, max estimate and active/disappeared state; open saved audit details | Past signals; maxima may occur independently, and the saved snapshot is one calculation. Status is not permission to execute now. 100 rows/page. |
 | Settings | Configure your translation API; edit/save the five scanner parameters | API configuration applies immediately. Scanner parameters persist atomically and clear old candidates until a new book calculation; unsaved/failure states remain explicit. |
-| Logs | Select INFO/WARNING/ERROR; refresh | Recent 100 events; visible page polls every 5 seconds. |
+| Logs | Select INFO/WARNING/ERROR; pause/resume automatic rereading; refresh | Recent 100 events; visible page normally polls every 5 seconds. Pausing the view leaves backend collection running. |
 
-Click a directory market to open its drawer. Verify original outcome/token order, adjust per-leg quantity and other cost, inspect all outcome books and expanded rules, then close with Escape. Closed/paused/mapping-changed markets show a pause reason; unknown fees/minimum sizes, old or invalid books also halt useful candidate judgement. Three-or-more outcomes receive descriptive books, not a multi-outcome complete-set strategy. The scanner's separate detail exposes its REST calculation books/time alongside possibly newer WS display books.
+Click a directory market to open its drawer. Verify original outcome/token order, adjust per-leg quantity and other cost, inspect all outcome books and expanded rules, then close with Escape. Links such as `/#markets?inspect=MARKET_ID` reopen current inspection, including from saved records; they do not restore the saved quote. Closed/paused/mapping-changed markets show a pause reason; unknown fees/minimum sizes, old or invalid books also halt useful candidate judgement. Three-or-more outcomes receive descriptive books, not a multi-outcome complete-set strategy. The scanner's separate detail exposes its REST calculation books/time alongside possibly newer WS display books.
 
 Browser polling pauses in hidden tabs; backend polling continues. The drawer/monitor/scanner/logs normally reread every 5 seconds; the catalog page every 15 seconds. Full catalog discovery waits 600 seconds after each crawl and caps at 100 pages of 100 events. One event can contain many markets. Gamma responses may be cached: `metadataAsOf`/verification time means successful reading, not proof of a just-updated source.
 
@@ -154,17 +156,20 @@ Browser polling pauses in hidden tabs; backend polling continues. The drawer/mon
 
 **Zero does not imply a broken service or no platform-wide opportunities.** The selected sample may have no complete positive difference after fees, costs, size and profit/ROI gates. `VALID` can still have a negative net estimate. Unknown fees/minimum size and stale books intentionally block candidates.
 
-Check monitor Gamma/CLOB/error fields, REST source age, actual verified selection, coverage/update time and the detail reason. A successful `/health` with failed upstream fields means the local app works but collection is degraded. A fresh REST response can contain an old quiet source book; it remains `STALE`. A red refresh banner means retained content is an old snapshot. Do not interpret sample counts or WS connectivity as a profit signal.
+Read the scanner diagnostics first: selected samples → retained calculations → current candidates, followed by rejected-market counts for stale/unknown source times, fees, incomplete depth, missing minimum sizes, and profit/ROI gates. Each rejected market has one primary reason, so the reason counts add up; a market may fail additional checks. These are current checks on the bounded sample, not an assessment of every catalog market.
+
+Then check monitor Gamma/CLOB/error fields, REST source age, actual verified selection, coverage/update time and the detail reason. A successful `/health` with failed upstream fields means the local app works but collection is degraded. A fresh REST response can contain an old quiet source book; it remains `STALE`. A red refresh banner means retained content is an old snapshot. Do not interpret sample counts or WS connectivity as a profit signal.
 
 ## C. Save, change parameters, and inspect records
 
-“Save simulation” saves an observation only. The backend rechecks the current scanner candidate under the same refresh lock: matching market/book identities, supported known fees, known minimum size, complete depth, fresh source times, current metadata, minimum executable size and minimum profit/ROI. Missing/expired/nonqualifying snapshots return **409** and do not save a success. Rapid clicks are guarded; intentionally saving another valid observation later is allowed.
+“Save paper record” saves an observation only. Inline feedback shows the saved ID and a link to Paper records. The backend rechecks the current scanner candidate under the same refresh lock: matching market/book identities, supported known fees, known minimum size, complete depth, fresh source times, current metadata, minimum executable size and minimum profit/ROI. Missing/expired/nonqualifying snapshots return **409** and do not save a success. Rapid clicks are guarded; intentionally saving another valid observation later is allowed.
 
 If no real candidate appears, verify the empty state and run mocked regression tests in stage E; there is no requirement to fabricate a profitable public trade.
 
 - [ ] For a genuine current candidate, save once; the simulation ID appears in `/paper-trades` and the monitor count increases.
 - [ ] Edit a parameter, see “unsaved”, save, then wait for a new successful calculation. Restart restores the saved group. Keep your prior values if merely verifying this workflow.
 - [ ] In history/simulations, use next/previous beyond 100 records; empty databases and short pages disable “next”. Records come from the local database, not a wallet.
+- [ ] Open a saved record's audit details. Compare the original mapping, parameters and REST books; reopen current market inspection separately. Missing/closed current markets do not erase the saved record.
 
 The five-field parameter API is `GET /api/settings` / `PUT /api/settings`; PUT requires the complete group. ROI/rates are decimal fractions: `0.002` is 0.2%, not 0.002%. These are initial defaults, overridden by valid saved values:
 
@@ -185,7 +190,7 @@ GET /api/opportunities/history?limit=100&offset=0
 GET /api/opportunities/history/RECORD_ID
 ```
 
-Detail responses include `details.audit`: original mapping, parameters, source/as-of and actual two REST books. Older records may lack those fields. Use [Swagger /docs](http://127.0.0.1:8000/docs) for schemas and requests; unknown IDs return 404 and invalid parameters 422. The drawer's quantity/cost adjustment is inspection-only and does not save global scanner parameters.
+The Paper records and Signal history views expose these saved audit details directly. Detail responses include `details.audit`: original mapping, parameters, source/as-of and actual two REST books. Older records may lack those fields and are identified accordingly. Use [Swagger /docs](http://127.0.0.1:8000/docs) for schemas and requests; unknown IDs return 404 and invalid parameters 422. The drawer's quantity/cost adjustment is inspection-only and does not save global scanner parameters.
 
 ## D. Export and retain data
 

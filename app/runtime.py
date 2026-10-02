@@ -96,29 +96,48 @@ class ScannerRuntime:
             with suppress(TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), timeout=600)
 
-    def valid_opportunity(self, market: Market, result: DepthResult) -> bool:
+    def opportunity_reason(self, market: Market, result: DepthResult, *, now: datetime | None = None) -> str:
+        """Return the first failing scanner gate, using the same checks as eligibility."""
         if self.catalog.is_resolved(market.market_id):
-            return False
+            return "MARKET_RESOLVED"
         refreshed = self.status.last_orderbook_refresh
-        if refreshed is None or self.status.clob_status != "正常" or self.status.gamma_status != "正常":
-            return False
+        if self.status.gamma_status != "正常":
+            return "METADATA_UNVERIFIED"
+        if refreshed is None or self.status.clob_status != "正常":
+            return "BOOKS_UNAVAILABLE"
         books = [self.calculation_books.get(token) for token in market.token_ids]
-        age = self._calculation_age(market, result)
-        if age is None or not result.executable_quantity.is_finite():
-            return False
-        if any(
-            book is None
-            or book.asset_id != token
-            or (book.market and book.market != market.condition_id)
-            or book.min_order_size is None
-            or not book.min_order_size.is_finite()
-            or book.min_order_size <= 0
-            or result.executable_quantity < book.min_order_size
-            for token, book in zip(market.token_ids, books, strict=True)
-        ):
-            return False
+        if any(book is None for book in books):
+            return "BOOKS_UNAVAILABLE"
+        # Unusable calculations deliberately carry zero executable quantity.
+        # Explain the structural failure rather than reporting that sentinel
+        # as a minimum-size rejection. All these statuses remain ineligible.
+        if result.status in {
+            "INVALID_BOOK",
+            "CROSSED_BOOK",
+            "INVALID_PAIR",
+            "INVALID_CALCULATION",
+            "NO_ASKS",
+            "NO_LIQUIDITY",
+            "PARTIAL_NOT_ALLOWED",
+        }:
+            return result.status
+        age = self._calculation_age(market, result, now=now)
+        if age is None:
+            return "QUOTE_TIME_UNKNOWN"
+        if not result.executable_quantity.is_finite():
+            return "INVALID_CALCULATION"
+        for token, book in zip(market.token_ids, books, strict=True):
+            assert book is not None
+            if book.asset_id != token or (book.market and book.market != market.condition_id):
+                return "INVALID_PAIR"
+            if book.min_order_size is None:
+                return "MIN_ORDER_UNKNOWN"
+            if not book.min_order_size.is_finite() or book.min_order_size <= 0:
+                return "INVALID_BOOK"
+            if result.executable_quantity < book.min_order_size:
+                return "BELOW_MIN_ORDER"
         check = result.model_copy(update={"quote_age": age})
-        valid, _ = is_valid_opportunity(
+        valid, reason = is_valid_opportunity(
             market,
             check,
             min_quantity=Decimal(self.settings.minimum_executable_quantity),
@@ -126,14 +145,67 @@ class ScannerRuntime:
             min_roi=Decimal(self.settings.minimum_net_roi),
             max_quote_age=Decimal(self.settings.max_quote_age_seconds),
         )
-        return valid
+        if valid:
+            return "ELIGIBLE"
+        return {
+            "市场不可交易": "MARKET_UNAVAILABLE",
+            "扫描参数无效": "INVALID_PARAMETERS",
+            "计算字段无效": "INVALID_CALCULATION",
+            "行情过期": "STALE",
+            "共同可成交数量不足": "BELOW_QUANTITY",
+            "低于最低预计净利润": "BELOW_NET_PROFIT",
+            "低于最低预计净收益率": "BELOW_NET_ROI",
+        }.get(reason, reason)
 
-    def _calculation_age(self, market: Market, result: DepthResult) -> Decimal | None:
+    def valid_opportunity(self, market: Market, result: DepthResult, *, now: datetime | None = None) -> bool:
+        return self.opportunity_reason(market, result, now=now) == "ELIGIBLE"
+
+    def scanner_diagnostics(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """Partition selected markets by their current eligibility, not the last scan count."""
+        checked_at = now or datetime.now(UTC)
+        reasons: dict[str, int] = {}
+        calculated = 0
+        candidates = 0
+        for market in self.markets.values():
+            result = self.results.get(market.market_id)
+            if result is None:
+                reason = "AWAITING_CALCULATION"
+            else:
+                calculated += 1
+                reason = self.opportunity_reason(market, result, now=checked_at)
+            if reason == "ELIGIBLE":
+                candidates += 1
+            else:
+                reasons[reason] = reasons.get(reason, 0) + 1
+        return {
+            "selected_count": len(self.markets),
+            "calculated_count": calculated,
+            "candidate_count": candidates,
+            "rejected_count": len(self.markets) - candidates,
+            "reason_counts": dict(sorted(reasons.items())),
+            "checked_at": checked_at.isoformat(),
+            # This is local receipt time. Source quote age is checked separately
+            # above; repeatedly fetching an old source book cannot make it fresh.
+            "calculation_as_of": (
+                self.status.last_orderbook_refresh.isoformat() if self.status.last_orderbook_refresh else None
+            ),
+            "thresholds": {
+                key: str(getattr(self.settings, key))
+                for key in (
+                    "minimum_net_profit",
+                    "minimum_net_roi",
+                    "minimum_executable_quantity",
+                    "max_quote_age_seconds",
+                )
+            },
+        }
+
+    def _calculation_age(self, market: Market, result: DepthResult, *, now: datetime | None = None) -> Decimal | None:
         refreshed = self.status.last_orderbook_refresh
         books = [self.calculation_books.get(token) for token in market.token_ids]
         if refreshed is None or any(book is None for book in books):
             return None
-        now = datetime.now(UTC)
+        now = now or datetime.now(UTC)
         source_age = oldest_quote_age((book.timestamp for book in books if book is not None), now=now)
         if source_age is None or not result.quote_age.is_finite() or result.quote_age < 0:
             return None
@@ -483,17 +555,18 @@ class ScannerRuntime:
                 extra={"event": "event_write_failed", "error_type": type(logging_exc).__name__},
             )
 
-    def market_payload(self, market: Market) -> dict[str, Any]:
+    def market_payload(self, market: Market, *, now: datetime | None = None) -> dict[str, Any]:
+        observed_at = now or datetime.now(UTC)
         payload = market.model_dump(mode="json", exclude={"raw"})
         result = self.results.get(market.market_id)
         payload["calculation"] = result.model_dump(mode="json") if result else None
         if result:
-            age = self._calculation_age(market, result)
+            age = self._calculation_age(market, result, now=observed_at)
             payload["calculation"]["quote_age"] = str(age if age is not None else UNKNOWN_QUOTE_AGE)
             if result.status in {"VALID", "PARTIAL", "FEE_UNKNOWN"} and (
                 age is None or age > Decimal(self.settings.max_quote_age_seconds)
             ):
                 payload["calculation"]["status"] = "STALE"
-        payload["is_candidate"] = bool(result and self.valid_opportunity(market, result))
+        payload["is_candidate"] = bool(result and self.valid_opportunity(market, result, now=observed_at))
         payload["fee_reason"] = self.fee_reasons.get(market.market_id)
         return payload

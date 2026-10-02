@@ -69,11 +69,14 @@ def test_database_transaction_rollback(tmp_path: Path) -> None:
 def test_main_routes_and_health() -> None:
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
-        for route in ("/", "/opportunities", "/paper-trades", "/history", "/settings", "/logs"):
+        for route in ("/", "/monitor", "/opportunities", "/paper-trades", "/history", "/settings", "/logs"):
             response = client.get(route)
             assert response.status_code == 200
             assert '<html lang="en">' in response.text
-            assert "No order submission" in response.text
+            assert "Read only. No orders submitted." in response.text
+            assert 'id="workspace-navigation"' in response.text
+            assert 'class="site-topbar"' in response.text
+            assert 'id="main-content"' in response.text
         assert client.get("/api/markets?limit=1").status_code == 200
         assert client.get("/api/markets/missing").status_code == 404
 
