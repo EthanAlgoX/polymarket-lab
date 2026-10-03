@@ -4,7 +4,7 @@
 
 A local, public-data-only Polymarket research workspace: browse open markets by category, inspect actual outcome books, estimate two-outcome complete-set costs, and observe a bounded scanner. It reads official Gamma, CLOB, and Market WebSocket APIs directly. No website scraping, wallet connection, signing, orders, transfers, holdings, or realized account profit is implemented.
 
-The website starts in **English**. To use Chinese, configure your own translation API in **Settings → Translation API**, then choose **中文**. Docker uses backend `.env` configuration instead. If no API key is configured, the site stays in English and offers a configuration link. The Chinese README is maintained alongside this file and can be read without any API key.
+The website starts in **English**. To use Chinese, configure your own translation API in **Settings → Translation API**, then choose **中文**. Desktop Docker uses backend `.env` configuration; authenticated server deployments can use the website settings. If no API key is configured, the site stays in English and offers a configuration link. The Chinese README is maintained alongside this file and can be read without any API key.
 
 **An estimate is not a fill.** Mathematical `VALID`, positive estimated difference, and passing every current scanner gate are separate results. Zero candidates can be a healthy outcome. Sports/weather/crypto strategy pages and high-star repositories are dated research references; they do not provide validated predictions or guaranteed income.
 
@@ -78,6 +78,10 @@ For Chinese in Docker, put `DEEPSEEK_API_KEY` in the ignored `.env` before start
 
 Platform execution evidence is in [the evaluation](docs/FEATURE_EVALUATION.md). Windows/Docker instructions are not a claim that those environments were run on the current macOS host.
 
+### Authenticated server hosting
+
+See the [English server guide](deploy/README.md) · [中文部署说明](deploy/README_CN.md) for HTTPS access under `/polymarket-lab/`. The Linux Compose example uses an independent loopback port and persistent host directories. Protect the entire path with authentication before enabling hosted API settings via `PMS_CONFIGURATION_ORIGIN`. Set `PMS_ROOT_PATH` to match the proxy prefix. English works without copying any laptop API key.
+
 ## Configuration before first use
 
 Minimal `.env` values; this example contains no credential:
@@ -114,7 +118,7 @@ The shared header language switch changes both the interface and displayed marke
 3. Enter your **API key** and click **Save API settings**. Saving applies immediately. Configuration status identifies whether the active settings came from the website or the backend environment; the saved key is never returned to the browser.
 4. Click **Use Chinese** or the **中文** language button. Interface labels switch locally. Newly visible market titles, events, outcomes and expanded rules are translated in batches and persistently cached. Pending or failed translations keep the source text visible with a status message.
 
-These website save/remove controls require a native local installation. For Docker, use the [environment-based setup above](#docker) and recreate the container after changing `.env`. A remote LAN browser can read configuration status and use an already-configured API, but cannot change credentials through the website.
+These website save/remove controls work in a native local installation or an explicitly configured [authenticated server deployment](deploy/README.md). For Docker, use the [environment-based setup above](#docker) and recreate the container after changing `.env`. A remote LAN browser can read configuration status and use an already-configured API, but cannot change credentials through the website.
 
 For a compatible provider, use its **API base URL**, not a complete chat-completions endpoint; for example, a provider that publishes `/v1/chat/completions` normally has a base ending in `/v1`. Only public HTTPS destinations on the default port 443 are accepted; localhost, private networks and other protocols are unsupported. The integration expects the OpenAI-style **Chat Completions** protocol and a model that supports JSON output; providers that expose only other API protocols are unsupported. It does not automatically choose or upgrade models. Saving configuration validates its format; it does not prove that the key, model, balance or provider will work.
 

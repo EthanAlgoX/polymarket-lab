@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -26,6 +28,8 @@ class Settings(BaseSettings):
     app_name: str = "Polymarket Market Scanner"
     version: str = "0.1.0"
     host: str = "127.0.0.1"
+    root_path: str = ""
+    configuration_origin: str = ""
     port: int = Field(default=8000, ge=1, le=65535)
     gamma_url: str = "https://gamma-api.polymarket.com"
     clob_url: str = "https://clob.polymarket.com"
@@ -50,6 +54,48 @@ class Settings(BaseSettings):
     user_agent: str = "PolymarketMarketScanner/0.1.0 (public-read-only-research)"
     enable_live_scanner: bool = True
     max_markets: int = Field(default=40, ge=5, le=500)
+
+    @field_validator("configuration_origin")
+    @classmethod
+    def valid_configuration_origin(cls, value: str) -> str:
+        if not value:
+            return value
+        try:
+            origin = urlsplit(value)
+            host = origin.hostname or ""
+            port = origin.port
+            canonical_host = host if port in {None, 443} else f"{host}:{port}"
+            if (
+                origin.scheme != "https"
+                or (port is not None and not 1 <= port <= 65535)
+                or not re.fullmatch(
+                    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", host
+                )
+                or value != f"https://{canonical_host}"
+                or origin.netloc != canonical_host
+                or origin.username is not None
+                or origin.password is not None
+                or origin.path
+                or origin.query
+                or origin.fragment
+                or "\\" in value
+                or any(char.isspace() for char in value)
+            ):
+                raise ValueError
+        except ValueError:
+            raise ValueError(
+                "Configuration origin must be a canonical HTTPS origin, such as https://myaistock.top, "
+                "without credentials, a trailing slash, path, query or fragment"
+            ) from None
+        return value
+
+    @field_validator("root_path")
+    @classmethod
+    def valid_root_path(cls, value: str) -> str:
+        value = value.rstrip("/")
+        if value and not re.fullmatch(r"(?:/[A-Za-z0-9_-]+)+", value):
+            raise ValueError("Root path must contain slash-separated URL segments, such as /polymarket-lab")
+        return value
 
     @field_validator(
         "minimum_liquidity",

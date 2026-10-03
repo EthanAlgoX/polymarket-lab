@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}<span data-i18n-en="Paper records" data-i18n-zh="模拟观察记录">Paper records</span>{% endblock %}
-{% block header_actions %}<a class="button ghost" href="/api/exports/paper-trades.csv" data-i18n-en="Export CSV" data-i18n-zh="导出 CSV">Export CSV</a><button id="refresh" class="button" data-i18n-en="Refresh records" data-i18n-zh="刷新记录">Refresh records</button>{% endblock %}
+{% block header_actions %}<a class="button ghost" href="{{ request.scope.get('root_path', '') }}/api/exports/paper-trades.csv" data-i18n-en="Export CSV" data-i18n-zh="导出 CSV">Export CSV</a><button id="refresh" class="button" data-i18n-en="Refresh records" data-i18n-zh="刷新记录">Refresh records</button>{% endblock %}
 {% block content %}
 <p class="page-context" data-i18n-en="Review saved cost estimates and the public books behind them. Each record captures a historical observation; it is not an execution or realized profit." data-i18n-zh="回看已保存的成本估算及其公开盘口依据。每条记录都是历史观察，不代表成交或已实现收益。">Review saved cost estimates and the public books behind them. Each record captures a historical observation; it is not an execution or realized profit.</p>
 <section id="record-inspection" class="panel record-inspection hidden" aria-label="Saved snapshot inspection" data-i18n-aria-label-en="Saved snapshot inspection" data-i18n-aria-label-zh="已保存快照核验" tabindex="-1"></section>

@@ -3,16 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <link rel="icon" href="/static/favicon.svg">
+  <meta name="app-root-path" content="{{ request.scope.get('root_path', '') }}">
+  <script src="{{ request.scope.get('root_path', '') }}/static/js/site-paths.js?v=20261003-deployment-1"></script>
+  <link rel="icon" href="{{ request.scope.get('root_path', '') }}/static/favicon.svg">
   <title>Order Book Workspace · Polymarket Lab</title>
-  <link rel="stylesheet" href="/static/css/app.css?v=20261003-workspace-5">
-  <link rel="stylesheet" href="/static/css/market-language.css?v=20261003-workspace-5">
-  <link rel="stylesheet" href="/static/css/site-shell.css?v=20261003-workspace-5">
-  <link rel="stylesheet" href="/static/css/research-tools.css?v=20261003-workspace-5">
-  <script src="/static/js/site-language.js?v=20261003-language-1" defer></script><script src="/static/js/market-language.js?v=20261003-language-1" defer></script><script src="/static/js/llm-settings.js?v=20261003-language-1" defer></script>
-  <script src="/static/js/site-navigation.js?v=20261003-workspace-5" defer></script>
-  <script src="/static/js/book-quality.js?v=20261003-language-1" defer></script>
-  <script src="/static/js/app.js?v=20261003-workspace-5" defer></script>
+  <link rel="stylesheet" href="{{ request.scope.get('root_path', '') }}/static/css/app.css?v=20261003-deployment-1">
+  <link rel="stylesheet" href="{{ request.scope.get('root_path', '') }}/static/css/market-language.css?v=20261003-deployment-1">
+  <link rel="stylesheet" href="{{ request.scope.get('root_path', '') }}/static/css/site-shell.css?v=20261003-deployment-1">
+  <link rel="stylesheet" href="{{ request.scope.get('root_path', '') }}/static/css/research-tools.css?v=20261003-deployment-1">
+  <script src="{{ request.scope.get('root_path', '') }}/static/js/site-language.js?v=20261003-deployment-1" defer></script><script src="{{ request.scope.get('root_path', '') }}/static/js/market-language.js?v=20261003-deployment-1" defer></script><script src="{{ request.scope.get('root_path', '') }}/static/js/llm-settings.js?v=20261003-deployment-1" defer></script>
+  <script src="{{ request.scope.get('root_path', '') }}/static/js/site-navigation.js?v=20261003-deployment-1" defer></script>
+  <script src="{{ request.scope.get('root_path', '') }}/static/js/book-quality.js?v=20261003-deployment-1" defer></script>
+  <script src="{{ request.scope.get('root_path', '') }}/static/js/app.js?v=20261003-deployment-1" defer></script>
 </head>
 <body data-page="{{ page }}"{% if market_id %} data-market-id="{{ market_id }}"{% endif %}>
   <!-- THESIS: A research workspace organized around discovery, verification and observation.

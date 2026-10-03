@@ -171,3 +171,58 @@ def test_saved_provider_survives_application_restart(monkeypatch, tmp_path: Path
         assert result["source"] == "local"
         assert result["configured"] is True
         assert app.state.translations.provider.api_key == "fixture-private-key"
+
+
+def test_hosted_https_configuration_requires_explicit_origin_and_keeps_key_private(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.settings.configuration_origin", "https://myaistock.top")
+    with TestClient(app, base_url="https://myaistock.top", client=("192.0.2.10", 50000)) as client:
+        assert client.get("/api/llm/config").status_code == 200
+        headers = {"origin": "https://myaistock.top", "sec-fetch-site": "same-origin"}
+        saved = client.put("/api/llm/config", json=configuration(), headers=headers)
+        assert saved.status_code == 200
+        assert saved.json()["configured"] is True
+        assert "fixture-private-key" not in saved.text
+        assert stat.S_IMODE(app.state.llm_config.path.stat().st_mode) == 0o600
+        removed = client.delete("/api/llm/config", headers=headers)
+        assert removed.status_code == 200
+        assert removed.json()["configured"] is False
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {"origin": "null"},
+        {"origin": "https://attacker.example"},
+        {"origin": "https://myaistock.top/"},
+        {"origin": "https://myaistock.top", "sec-fetch-site": "same-site"},
+        {"origin": "https://myaistock.top", "sec-fetch-site": "cross-site"},
+    ],
+)
+def test_hosted_configuration_rejects_cross_site_or_missing_origin(monkeypatch, headers) -> None:
+    monkeypatch.setattr("app.main.settings.configuration_origin", "https://myaistock.top")
+    with TestClient(app, base_url="https://myaistock.top", client=("192.0.2.10", 50000)) as client:
+        assert client.put("/api/llm/config", json=configuration(), headers=headers).status_code == 403
+        assert client.delete("/api/llm/config", headers=headers).status_code == 403
+        assert not app.state.llm_config.path.exists()
+        if headers:
+            assert client.get("/api/llm/config", headers=headers).status_code == 403
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["http://myaistock.top", "https://attacker.example", "http://127.0.0.1:8011", "https://localhost:8011"],
+)
+def test_hosted_configuration_has_no_loopback_or_forwarded_header_bypass(monkeypatch, base_url: str) -> None:
+    monkeypatch.setattr("app.main.settings.configuration_origin", "https://myaistock.top")
+    with TestClient(app, base_url=base_url, client=("127.0.0.1", 50000)) as client:
+        headers = {
+            "origin": "https://myaistock.top",
+            "sec-fetch-site": "same-origin",
+            "x-forwarded-proto": "https",
+            "x-forwarded-host": "myaistock.top",
+        }
+        assert client.get("/api/llm/config", headers=headers).status_code == 403
+        assert client.put("/api/llm/config", json=configuration(), headers=headers).status_code == 403
+        assert client.delete("/api/llm/config", headers=headers).status_code == 403
+        assert not app.state.llm_config.path.exists()

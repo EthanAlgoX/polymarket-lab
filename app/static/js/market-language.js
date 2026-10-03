@@ -1,5 +1,6 @@
 (() => {
   'use strict';
+  const localUrl = path => window.SitePaths ? window.SitePaths.url(path) : path;
   const preferenceKey = 'polymarket.site-language.v2';
   let cacheKey = null, configuration = null, configurationRequest = null, generation = 0, selection = 0;
   const cache = new Map();
@@ -45,7 +46,7 @@
     configurationRequest = (async () => {
       const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 10000);
       try {
-        const response = await fetch('/api/llm/config', {cache:'no-store', signal:controller.signal});
+        const response = await fetch(localUrl('/api/llm/config'), {cache:'no-store', signal:controller.signal});
         if (!response.ok) throw new Error('Configuration unavailable');
         const result = await response.json();
         if (configurationGeneration !== generation && configuration) return configuration;
@@ -177,7 +178,7 @@
     const abort = new AbortController();
     const timeout = setTimeout(() => abort.abort(), 20000);
     try {
-      const response = await fetch('/api/translations', {method:'POST', headers:{'Accept':'application/json','Content-Type':'application/json'}, body:JSON.stringify({texts:request}), signal:abort.signal});
+      const response = await fetch(localUrl('/api/translations'), {method:'POST', headers:{'Accept':'application/json','Content-Type':'application/json'}, body:JSON.stringify({texts:request}), signal:abort.signal});
       if (!response.ok) throw new Error(`Translation request failed (${response.status})`);
       const result = await response.json();
       if (requestGeneration !== generation) return;

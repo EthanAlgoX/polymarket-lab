@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}<span data-i18n-en="Depth verification" data-i18n-zh="盘口深度核验">Depth verification</span>{% endblock %}
-{% block header_actions %}<a class="button ghost" href="/opportunities" data-i18n-en="Back to scanner" data-i18n-zh="返回盘口扫描">Back to scanner</a><button id="refresh" class="button" data-i18n-en="Refresh books" data-i18n-zh="刷新盘口">Refresh books</button>{% endblock %}
+{% block header_actions %}<a class="button ghost" href="{{ request.scope.get('root_path', '') }}/opportunities" data-i18n-en="Back to scanner" data-i18n-zh="返回盘口扫描">Back to scanner</a><button id="refresh" class="button" data-i18n-en="Refresh books" data-i18n-zh="刷新盘口">Refresh books</button>{% endblock %}
 {% block content %}
 <p class="page-context" data-i18n-en="Inspect the selected scanner market, its rules, and traceable cost calculation. Display books can update through WebSocket after the REST snapshot used in the calculation." data-i18n-zh="核验选定扫描市场、结算规则与可追溯成本。展示盘口可能在计算所用 REST 快照之后由 WebSocket 更新。">Inspect the selected scanner market, its rules, and traceable cost calculation. Display books can update through WebSocket after the REST snapshot used in the calculation.</p>
 <section id="market-summary" class="panel market-summary"><div class="empty" data-i18n-en="Loading market rules and order books…" data-i18n-zh="正在读取市场规则与盘口…">Loading market rules and order books…</div></section>

@@ -1,5 +1,6 @@
 (() => {
   'use strict';
+  const localUrl = path => window.SitePaths ? window.SitePaths.url(path) : path;
   const t = (en, zh) => window.SiteLanguage ? window.SiteLanguage.t(en, zh) : en;
   let config = null, busy = false, result = null, dirty = false;
   const normalizedBase = value => { try { const url = new URL(value); return url.origin + url.pathname.replace(/\/+$/, ''); } catch { return value; } };
@@ -36,7 +37,7 @@
   async function mutate(method, body) {
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 20000);
     try {
-      const response = await fetch('/api/llm/config', {method, cache:'no-store', headers:{'Content-Type':'application/json'}, body:body ? JSON.stringify(body) : undefined, signal:controller.signal});
+      const response = await fetch(localUrl('/api/llm/config'), {method, cache:'no-store', headers:{'Content-Type':'application/json'}, body:body ? JSON.stringify(body) : undefined, signal:controller.signal});
       const payload = await response.json();
       if (!response.ok) throw new Error(typeof payload.detail === 'string' ? (payload.detail === 'API configuration is available only from the local computer.' ? 'API configuration is available only from the local computer. For Docker, configure the key in .env and restart the container.' : payload.detail) : t('Check the provider, URL, model, and API key fields.', '请检查提供商、地址、模型和密钥字段。'));
       // Read the active server configuration after the write. Another tab may have

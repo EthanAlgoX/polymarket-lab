@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}<span data-i18n-en="Signal history" data-i18n-zh="信号历史">Signal history</span>{% endblock %}
-{% block header_actions %}<a class="button ghost" href="/api/exports/opportunities.csv" data-i18n-en="Export CSV" data-i18n-zh="导出 CSV">Export CSV</a><button id="refresh" class="button" data-i18n-en="Refresh history" data-i18n-zh="刷新历史">Refresh history</button>{% endblock %}
+{% block header_actions %}<a class="button ghost" href="{{ request.scope.get('root_path', '') }}/api/exports/opportunities.csv" data-i18n-en="Export CSV" data-i18n-zh="导出 CSV">Export CSV</a><button id="refresh" class="button" data-i18n-en="Refresh history" data-i18n-zh="刷新历史">Refresh history</button>{% endblock %}
 {% block content %}
 <p class="page-context" data-i18n-en="Compare signals that previously passed scanner thresholds. Open a saved snapshot to inspect its inputs, or inspect the current market separately. Historical maxima can occur at different times." data-i18n-zh="比较曾通过扫描门槛的信号。可打开保存快照核验输入，或另行检查当前市场。不同历史最大值可能出现在不同时间。">Compare signals that previously passed scanner thresholds. Open a saved snapshot to inspect its inputs, or inspect the current market separately. Historical maxima can occur at different times.</p>
 <section id="record-inspection" class="panel record-inspection hidden" aria-label="Saved snapshot inspection" data-i18n-aria-label-en="Saved snapshot inspection" data-i18n-aria-label-zh="已保存快照核验" tabindex="-1"></section>

@@ -3,20 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="app-root-path" content="{{ request.scope.get('root_path', '') }}">
+  <script src="{{ request.scope.get('root_path', '') }}/static/js/site-paths.js?v=20261003-deployment-1"></script>
   <title>Polymarket Lab</title>
   <meta name="description" content="Public market discovery, live order books, and strategy research" data-i18n-content-en="Public market discovery, live order books, and strategy research" data-i18n-content-zh="公开市场目录、实时订单簿与交易空间研究">
-  <link rel="icon" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/css/research.css?v=20261003-workspace-5">
-  <link rel="stylesheet" href="/static/css/market-language.css?v=20261003-workspace-5">
-  <link rel="stylesheet" href="/static/css/site-shell.css?v=20261003-workspace-5">
-  <link rel="stylesheet" href="/static/css/research-tools.css?v=20261003-workspace-5">
-  <script src="/static/js/site-language.js?v=20261003-language-1" defer></script>
-  <script src="/static/js/market-language.js?v=20261003-language-1" defer></script>
-  <script src="/static/js/llm-settings.js?v=20261003-language-1" defer></script>
-  <script src="/static/js/site-navigation.js?v=20261003-workspace-5" defer></script>
-  <script src="/static/js/book-quality.js?v=20261003-language-1" defer></script>
-  <script src="/static/js/research-copy.js?v=20261003-language-1" defer></script>
-  <script src="/static/js/research.js?v=20261003-workspace-5" defer></script>
+  <link rel="icon" href="{{ request.scope.get('root_path', '') }}/static/favicon.svg">
+  <link rel="stylesheet" href="{{ request.scope.get('root_path', '') }}/static/css/research.css?v=20261003-deployment-1">
+  <link rel="stylesheet" href="{{ request.scope.get('root_path', '') }}/static/css/market-language.css?v=20261003-deployment-1">
+  <link rel="stylesheet" href="{{ request.scope.get('root_path', '') }}/static/css/site-shell.css?v=20261003-deployment-1">
+  <link rel="stylesheet" href="{{ request.scope.get('root_path', '') }}/static/css/research-tools.css?v=20261003-deployment-1">
+  <script src="{{ request.scope.get('root_path', '') }}/static/js/site-language.js?v=20261003-deployment-1" defer></script>
+  <script src="{{ request.scope.get('root_path', '') }}/static/js/market-language.js?v=20261003-deployment-1" defer></script>
+  <script src="{{ request.scope.get('root_path', '') }}/static/js/llm-settings.js?v=20261003-deployment-1" defer></script>
+  <script src="{{ request.scope.get('root_path', '') }}/static/js/site-navigation.js?v=20261003-deployment-1" defer></script>
+  <script src="{{ request.scope.get('root_path', '') }}/static/js/book-quality.js?v=20261003-deployment-1" defer></script>
+  <script src="{{ request.scope.get('root_path', '') }}/static/js/research-copy.js?v=20261003-deployment-1" defer></script>
+  <script src="{{ request.scope.get('root_path', '') }}/static/js/research.js?v=20261003-deployment-1" defer></script>
 </head>
 <body>
   {% include "sidebar.html" %}{% include "topbar.html" %}{% include "language_notice.html" %}
@@ -35,7 +37,7 @@
         <div><label data-i18n-en="Markets matching filters" data-i18n-zh="符合筛选的市场">Markets matching filters</label><strong id="total">—</strong><small id="total-scope" data-i18n-en="Current filters" data-i18n-zh="当前筛选">Current filters</small></div>
         <div><label data-i18n-en="24h volume" data-i18n-zh="24h 成交量">24h volume</label><strong id="volume">—</strong><small data-i18n-en="Filtered markets · USD" data-i18n-zh="筛选市场 · 美元计价">Filtered markets · USD</small></div>
         <div><label data-i18n-en="Catalog liquidity" data-i18n-zh="目录流动性">Catalog liquidity</label><strong id="liquidity">—</strong><small data-i18n-en="Aggregate, not executable depth" data-i18n-zh="汇总指标，非可成交深度">Aggregate, not executable depth</small></div>
-        <div class="scan-metric"><label data-i18n-en="Scanner candidates / sample" data-i18n-zh="扫描候选 / 样本">Scanner candidates / sample</label><strong id="candidates">—<em> / —</em></strong><small id="scan-scope" data-i18n-en="Global sample · Independent of filters" data-i18n-zh="全局样本 · 不随目录筛选">Global sample · Independent of filters</small><a class="metric-link" href="/opportunities" data-i18n-en="Open scanner →" data-i18n-zh="打开盘口扫描 →">Open scanner →</a></div>
+        <div class="scan-metric"><label data-i18n-en="Scanner candidates / sample" data-i18n-zh="扫描候选 / 样本">Scanner candidates / sample</label><strong id="candidates">—<em> / —</em></strong><small id="scan-scope" data-i18n-en="Global sample · Independent of filters" data-i18n-zh="全局样本 · 不随目录筛选">Global sample · Independent of filters</small><a class="metric-link" href="{{ request.scope.get('root_path', '') }}/opportunities" data-i18n-en="Open scanner →" data-i18n-zh="打开盘口扫描 →">Open scanner →</a></div>
       </section>
       <section id="market-surface" class="market-surface" aria-label="Market directory" data-i18n-aria-label-en="Market directory" data-i18n-aria-label-zh="市场目录" aria-busy="true">
         <div class="section-label"><h2 data-i18n-en="Market directory" data-i18n-zh="市场目录">Market directory</h2><span data-i18n-en="One category per market" data-i18n-zh="每个市场归入一个行业">One category per market</span></div>
@@ -54,7 +56,7 @@
     </section>
     <section id="strategies-view" hidden>
       <div class="research-intro"><p data-i18n-en="Category activity helps choose what to study. An edge still requires settlement rules, independent evidence and executable prices after costs." data-i18n-zh="行业活跃度可以帮助选择研究方向；优势仍需结算规则、独立证据和成本后的可成交价格。">Category activity helps choose what to study. An edge still requires settlement rules, independent evidence and executable prices after costs.</p></div>
-      <section class="research-ready"><div><h2 data-i18n-en="Available now: binary complete-set analysis" data-i18n-zh="现有功能：二元完整集分析">Available now: binary complete-set analysis</h2><p data-i18n-en="The scanner verifies sampled Yes/No markets, depth, fees, freshness and configured thresholds. Inspect a signal and save a paper observation for an auditable snapshot." data-i18n-zh="扫描器核验样本 Yes/No 市场的深度、费用、时效和配置门槛。打开信号详情并保存纸面观察，可保留可复核快照。">The scanner verifies sampled Yes/No markets, depth, fees, freshness and configured thresholds. Inspect a signal and save a paper observation for an auditable snapshot.</p></div><a class="button" href="/opportunities" data-i18n-en="Open book scanner" data-i18n-zh="打开盘口扫描">Open book scanner</a></section>
+      <section class="research-ready"><div><h2 data-i18n-en="Available now: binary complete-set analysis" data-i18n-zh="现有功能：二元完整集分析">Available now: binary complete-set analysis</h2><p data-i18n-en="The scanner verifies sampled Yes/No markets, depth, fees, freshness and configured thresholds. Inspect a signal and save a paper observation for an auditable snapshot." data-i18n-zh="扫描器核验样本 Yes/No 市场的深度、费用、时效和配置门槛。打开信号详情并保存纸面观察，可保留可复核快照。">The scanner verifies sampled Yes/No markets, depth, fees, freshness and configured thresholds. Inspect a signal and save a paper observation for an auditable snapshot.</p></div><a class="button" href="{{ request.scope.get('root_path', '') }}/opportunities" data-i18n-en="Open book scanner" data-i18n-zh="打开盘口扫描">Open book scanner</a></section>
       <div class="section-label research-section-label"><h2 data-i18n-en="Research directions" data-i18n-zh="研究方向">Research directions</h2><span data-i18n-en="External feeds not connected · Models not backtested" data-i18n-zh="尚未接入外部数据 · 模型未回测">External feeds not connected · Models not backtested</span></div>
       <div id="strategy-grid" class="strategy-grid"></div>
       <section class="method"><h2 data-i18n-en="Validate before recording a decision" data-i18n-zh="记录判断之前先验证">Validate before recording a decision</h2><ol><li data-i18n-en="Read original settlement rules and verify mutually exclusive, exhaustive outcomes." data-i18n-zh="阅读原始结算规则，核实结果是否互斥且穷尽。">Read original settlement rules and verify mutually exclusive, exhaustive outcomes.</li><li data-i18n-en="Calculate common executable quantity, level-by-level cost, fees and buffers. Keep unknown inputs explicit." data-i18n-zh="计算共同可成交量、逐档成本、费用和缓冲；明确保留未知输入。">Calculate common executable quantity, level-by-level cost, fees and buffers. Keep unknown inputs explicit.</li><li data-i18n-en="Review independent execution of both legs and unmeasured merge or on-chain costs." data-i18n-zh="核验双腿独立执行，以及尚未实测的合并或链上成本。">Review independent execution of both legs and unmeasured merge or on-chain costs.</li><li data-i18n-en="Retain the original data and validate predictive models out of sample before paper observation." data-i18n-zh="保留原始数据，并先用样本外数据验证预测模型，再进行纸面观察。">Retain the original data and validate predictive models out of sample before paper observation.</li></ol><p data-i18n-en="Weather observations, sports odds and Chainlink reference prices are not connected. These research directions do not establish a profitable edge in a specific market." data-i18n-zh="尚未接入天气观测、体育赔率或 Chainlink 参考价。这些研究方向不能证明某个市场存在盈利优势。">Weather observations, sports odds and Chainlink reference prices are not connected. These research directions do not establish a profitable edge in a specific market.</p></section>

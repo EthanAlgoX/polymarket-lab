@@ -25,6 +25,7 @@
     "API configuration fields must be strings.":"API 配置字段必须是文本。",
     "API configuration is available only from the local computer.":"API 设置只能在原生本机服务中修改。Docker 用户请在 .env 配置密钥并重启容器。",
     "API configuration is unavailable in this test server.":"此测试服务未启用 API 配置。",
+    "API configuration requires the configured HTTPS website origin.":"API 设置必须来自配置的 HTTPS 网站来源。",
     "API configuration requires a request from this website's origin.":"请从当前网站的配置页面提交 API 设置。",
     "Choose DeepSeek or an OpenAI-compatible provider.":"请选择 DeepSeek 或 OpenAI 兼容接口。",
     "Configure your LLM API in Settings before switching to Chinese.":"切换中文前，请在设置中配置自己的 LLM API。",

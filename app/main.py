@@ -61,7 +61,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             await runtime.stop()
 
 
-app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan, root_path=settings.root_path)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
@@ -99,7 +99,23 @@ def configured_translator(configuration: LLMConfiguration) -> DeepSeekTranslator
 
 
 def local_configuration_request(request: Request, *, mutation: bool = True) -> None:
-    """Credential configuration belongs to the local origin, including on a LAN-bound scanner."""
+    """Guard origin/CSRF; hosted authentication belongs to the loopback backend's reverse proxy."""
+    if request.headers.get("sec-fetch-site", "none") not in {"none", "same-origin"}:
+        raise HTTPException(403, "API configuration requires a request from this website's origin.")
+    if configured_origin := settings.configuration_origin:
+        # Explicit HTTPS deployment mode replaces the local exception. Uvicorn must trust
+        # forwarded headers only from the authenticated, loopback reverse proxy; this
+        # origin check is not authentication and never reads arbitrary forwarded headers.
+        expected = urlsplit(configured_origin)
+        origin = request.headers.get("origin")
+        if (
+            request.url.scheme != "https"
+            or request.url.netloc != expected.netloc
+            or (mutation and origin != configured_origin)
+            or (origin is not None and origin != configured_origin)
+        ):
+            raise HTTPException(403, "API configuration requires the configured HTTPS website origin.")
+        return
     host = request.url.hostname or ""
     try:
         host_is_local = host == "localhost" or ipaddress.ip_address(host).is_loopback
@@ -111,8 +127,6 @@ def local_configuration_request(request: Request, *, mutation: bool = True) -> N
         client_is_local = False
     if mutation and (not host_is_local or not client_is_local):
         raise HTTPException(403, "API configuration is available only from the local computer.")
-    if request.headers.get("sec-fetch-site", "none") not in {"none", "same-origin"}:
-        raise HTTPException(403, "API configuration requires a request from this website's origin.")
     if origin := request.headers.get("origin"):
         try:
             parsed = urlsplit(origin)

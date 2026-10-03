@@ -1,0 +1,28 @@
+# Linux server deployment. Keep the local docker-compose.yml for desktop use.
+services:
+  lab:
+    image: ${PMS_IMAGE:-polymarket-lab:latest}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    network_mode: host
+    environment:
+      PMS_HOST: 127.0.0.1
+      PMS_PORT: ${PMS_SERVER_PORT:-8011}
+      PMS_ROOT_PATH: ${PMS_ROOT_PATH:-/polymarket-lab}
+      PMS_CONFIGURATION_ORIGIN: ${PMS_CONFIGURATION_ORIGIN:-}
+      PMS_DATABASE_URL: sqlite:////app/data/scanner.db
+      FORWARDED_ALLOW_IPS: 127.0.0.1
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ${PMS_DATA_DIR:-/opt/polymarket-lab/data}:/app/data
+      - ${PMS_LOG_DIR:-/opt/polymarket-lab/logs}:/app/logs
+    restart: unless-stopped
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'

@@ -1,3 +1,4 @@
+const localUrl = path => window.SitePaths ? window.SitePaths.url(path) : path;
 const $ = selector => document.querySelector(selector);
 const t = (en, zh) => window.SiteLanguage ? window.SiteLanguage.t(en, zh) : en;
 const message = value => window.SiteLanguage ? window.SiteLanguage.message(value) : String(value ?? '');
@@ -18,7 +19,7 @@ const pageData = {};
 let refreshing = false, settingsBound = false, settingsDirty = false, settingsSaving = false, logItems = [], logsPaused = false, lastRead = null, lastError = null, refreshFailed = false, savedPaperId = null;
 let logUpdateRevision = 0, thresholdRevision = 0;
 const recordInspection = {kind:null, id:null, sequence:0, loading:false, payload:null, error:null};
-const currentMarketLink = id => `/#markets?inspect=${encodeURIComponent(id)}`;
+const currentMarketLink = id => localUrl(`/#markets?inspect=${encodeURIComponent(id)}`);
 
 function requestMessage(detail, fallback) {
   if (typeof detail === 'string') return message(detail);
@@ -28,7 +29,7 @@ function requestMessage(detail, fallback) {
 async function api(path, options={}) {
   const abort = new AbortController(), timeout = setTimeout(() => abort.abort(), 25000);
   try {
-    const response = await fetch(path, {headers:{Accept:'application/json','Content-Type':'application/json'}, ...options, signal:abort.signal});
+    const response = await fetch(localUrl(path), {headers:{Accept:'application/json','Content-Type':'application/json'}, ...options, signal:abort.signal});
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
       throw new Error(requestMessage(body.detail, `HTTP ${response.status}`));
@@ -60,7 +61,7 @@ function renderDashboard(data, markets, s) {
   $('#runtime').innerHTML=`<dt>${t('Started at','启动时间')}</dt><dd>${dateText(s.started_at)}</dd><dt>${t('Metadata received','元数据接收时间')}</dt><dd>${dateText(s.last_market_refresh)}</dd><dt>${t('Last WebSocket message','最近 WebSocket 消息')}</dt><dd>${dateText(s.last_websocket_message)}</dd><dt>${t('WebSocket messages','WebSocket 消息')}</dt><dd>${num(s.websocket_messages,0)}</dd><dt>${t('Latest error','最近错误')}</dt><dd>${esc(s.recent_error?message(s.recent_error):t('None','无'))}</dd>`;
   const h=s.public_http||{};
   $('#http-metrics').innerHTML=`<span>${t('Public API requests','公开 API 请求')} <b>${num(h.calls,0)}</b></span><span>${t('Retries','实际重试')} <b>${num(h.retries,0)}</b></span><span>${t('Rate-limit responses','限流响应')} <b>${num(h.rate_limited,0)}</b></span><span>${t('Last wait','最近等待')} <b>${num(h.last_retry_delay,2)} ${t('s','秒')}</b></span>`;
-  $('#market-preview').innerHTML=markets.items.length?markets.items.map(m=>`<tr><td><a href="/markets/${encodeURIComponent(m.market_id)}">${marketText(m.question)}</a></td><td>${num(m.liquidity,2)}</td><td>${num(m.volume,2)}</td><td>${m.fee_rate!=null?`${num(Number(m.fee_rate)*100,2)}%`:m.fees_enabled===false?t('No fee','无费用'):m.fee_reason?t('Unknown fees','手续费未知'):t('Unverified','待核验')}</td><td>${esc(calculationStatus()[m.calculation?.status]||t('Awaiting order book','等待订单簿'))}</td></tr>`).join(''):`<tr><td colspan="5" class="empty"><strong>${t('No scanner sample available','暂无扫描样本')}</strong><p>${t('Check connections and collection logs. The market catalog can still be explored independently.','请检查连接与采集日志，仍可独立浏览市场目录。')}</p><a href="/logs">${t('Open connection logs','打开连接日志')}</a></td></tr>`;
+  $('#market-preview').innerHTML=markets.items.length?markets.items.map(m=>`<tr><td><a href="${localUrl(`/markets/${encodeURIComponent(m.market_id)}`)}">${marketText(m.question)}</a></td><td>${num(m.liquidity,2)}</td><td>${num(m.volume,2)}</td><td>${m.fee_rate!=null?`${num(Number(m.fee_rate)*100,2)}%`:m.fees_enabled===false?t('No fee','无费用'):m.fee_reason?t('Unknown fees','手续费未知'):t('Unverified','待核验')}</td><td>${esc(calculationStatus()[m.calculation?.status]||t('Awaiting order book','等待订单簿'))}</td></tr>`).join(''):`<tr><td colspan="5" class="empty"><strong>${t('No scanner sample available','暂无扫描样本')}</strong><p>${t('Check connections and collection logs. The market catalog can still be explored independently.','请检查连接与采集日志，仍可独立浏览市场目录。')}</p><a href="${localUrl('/logs')}">${t('Open connection logs','打开连接日志')}</a></td></tr>`;
 }
 async function dashboard() {
   const [data,markets] = await Promise.all([api('/api/dashboard'), api('/api/markets?limit=8')]);
@@ -78,9 +79,9 @@ function rejectionReasons() {
 }
 function renderScannerDiagnostics(diagnostics) {
   const target=$('#scanner-diagnostics');if(!target)return;
-  if(!diagnostics){target.innerHTML=`<p class="muted">${t('Sample diagnostics are unavailable. Check the runtime monitor before assessing candidates.','样本诊断不可用，请先查看运行监控。')} <a href="/monitor">${t('Open monitor','打开运行监控')}</a></p>`;return;}
+  if(!diagnostics){target.innerHTML=`<p class="muted">${t('Sample diagnostics are unavailable. Check the runtime monitor before assessing candidates.','样本诊断不可用，请先查看运行监控。')} <a href="${localUrl('/monitor')}">${t('Open monitor','打开运行监控')}</a></p>`;return;}
   const d=diagnostics, thresholds=d.thresholds||{}, reasons=rejectionReasons();
-  target.innerHTML=`<div class="panel-head"><h2>${t('Sample eligibility','样本候选条件')}</h2><a href="/monitor">${t('Runtime monitor','运行监控')}</a></div><ol class="scanner-pipeline"><li><strong>${num(d.selected_count,0)}</strong><span>${t('Selected Yes/No markets','选定 Yes/No 市场')}</span></li><li><strong>${num(d.calculated_count,0)}</strong><span>${t('With calculations','已有计算')}</span></li><li><strong>${num(d.candidate_count,0)}</strong><span>${t('Eligible candidates','符合条件的候选')}</span></li></ol><p class="muted">${t('Limited sample, not the whole catalog. REST batch received: ','有限样本，并非全部市场目录。REST 批次接收于：')}${dateText(d.calculation_as_of)}</p><div class="diagnostic-reasons">${Object.entries(d.reason_counts||{}).filter(([,count])=>count>0).map(([code,count])=>`<span><b>${num(count,0)}</b> ${esc(reasons[code]||code)}</span>`).join('')||`<span>${t('No selected markets excluded in this check.','此次检查未排除选定市场。')}</span>`}</div><dl class="scanner-thresholds"><dt>${t('Min. net edge','最低净差额')}</dt><dd>${esc(thresholds.minimum_net_profit??'—')} pUSD</dd><dt>${t('Min. ROI','最低收益率')}</dt><dd>${pct(thresholds.minimum_net_roi)}</dd><dt>${t('Min. common shares','最低共同股数')}</dt><dd>${esc(thresholds.minimum_executable_quantity??'—')}</dd><dt>${t('Max. quote age','报价最长有效时间')}</dt><dd>${esc(thresholds.max_quote_age_seconds??'—')} ${t('s','秒')}</dd></dl>`;
+  target.innerHTML=`<div class="panel-head"><h2>${t('Sample eligibility','样本候选条件')}</h2><a href="${localUrl('/monitor')}">${t('Runtime monitor','运行监控')}</a></div><ol class="scanner-pipeline"><li><strong>${num(d.selected_count,0)}</strong><span>${t('Selected Yes/No markets','选定 Yes/No 市场')}</span></li><li><strong>${num(d.calculated_count,0)}</strong><span>${t('With calculations','已有计算')}</span></li><li><strong>${num(d.candidate_count,0)}</strong><span>${t('Eligible candidates','符合条件的候选')}</span></li></ol><p class="muted">${t('Limited sample, not the whole catalog. REST batch received: ','有限样本，并非全部市场目录。REST 批次接收于：')}${dateText(d.calculation_as_of)}</p><div class="diagnostic-reasons">${Object.entries(d.reason_counts||{}).filter(([,count])=>count>0).map(([code,count])=>`<span><b>${num(count,0)}</b> ${esc(reasons[code]||code)}</span>`).join('')||`<span>${t('No selected markets excluded in this check.','此次检查未排除选定市场。')}</span>`}</div><dl class="scanner-thresholds"><dt>${t('Min. net edge','最低净差额')}</dt><dd>${esc(thresholds.minimum_net_profit??'—')} pUSD</dd><dt>${t('Min. ROI','最低收益率')}</dt><dd>${pct(thresholds.minimum_net_roi)}</dd><dt>${t('Min. common shares','最低共同股数')}</dt><dd>${esc(thresholds.minimum_executable_quantity??'—')}</dd><dt>${t('Max. quote age','报价最长有效时间')}</dt><dd>${esc(thresholds.max_quote_age_seconds??'—')} ${t('s','秒')}</dd></dl>`;
 }
 function filterOpportunities() {
   const query=($('#search')?.value || '').trim().toLowerCase();
@@ -94,7 +95,7 @@ function filterOpportunities() {
 }
 function renderOpportunities(data) {
   const body=$('#opportunity-table');
-  body.innerHTML=data.items.length?data.items.map(({market:m,calculation:c})=>`<tr data-market-search="${esc(m.question)}"><td>${marketText(m.question)}</td><td>${num(c.yes_average_price,6)}</td><td>${num(c.no_average_price,6)}</td><td>${num(c.executable_quantity,4)}</td><td>${num(c.total_cost,6)}</td><td>${num(c.estimated_fees,6)}</td><td class="${Number(c.net_profit)>=0?'positive':'negative'}">${num(c.net_profit,6)}</td><td>${pct(c.net_roi)}</td><td><div class="row-actions"><a class="button small ghost" href="/markets/${encodeURIComponent(m.market_id)}">${t('Inspect','核验')}</a><button class="button small" data-trade="${esc(m.market_id)}" ${recording.has(m.market_id)?'disabled':''}>${recording.has(m.market_id)?t('Saving…','正在保存…'):t('Save paper record','保存观察记录')}</button></div></td></tr>`).join(''):`<tr><td colspan="9" class="empty"><strong>${t('No eligible candidates in this sample','本轮样本没有符合条件的候选')}</strong><p>${t('This is a valid result. Review exclusion reasons above, inspect market depth, or adjust your assumptions. Lower thresholds do not remove fees or stale quotes.','这是正常结果。可查看上方排除原因、核验市场深度或调整假设。降低门槛不会消除费用或过期报价。')}</p><a href="/#markets">${t('Explore open markets','浏览开放市场')}</a></td></tr>`;
+  body.innerHTML=data.items.length?data.items.map(({market:m,calculation:c})=>`<tr data-market-search="${esc(m.question)}"><td>${marketText(m.question)}</td><td>${num(c.yes_average_price,6)}</td><td>${num(c.no_average_price,6)}</td><td>${num(c.executable_quantity,4)}</td><td>${num(c.total_cost,6)}</td><td>${num(c.estimated_fees,6)}</td><td class="${Number(c.net_profit)>=0?'positive':'negative'}">${num(c.net_profit,6)}</td><td>${pct(c.net_roi)}</td><td><div class="row-actions"><a class="button small ghost" href="${localUrl(`/markets/${encodeURIComponent(m.market_id)}`)}">${t('Inspect','核验')}</a><button class="button small" data-trade="${esc(m.market_id)}" ${recording.has(m.market_id)?'disabled':''}>${recording.has(m.market_id)?t('Saving…','正在保存…'):t('Save paper record','保存观察记录')}</button></div></td></tr>`).join(''):`<tr><td colspan="9" class="empty"><strong>${t('No eligible candidates in this sample','本轮样本没有符合条件的候选')}</strong><p>${t('This is a valid result. Review exclusion reasons above, inspect market depth, or adjust your assumptions. Lower thresholds do not remove fees or stale quotes.','这是正常结果。可查看上方排除原因、核验市场深度或调整假设。降低门槛不会消除费用或过期报价。')}</p><a href="${localUrl('/#markets')}">${t('Explore open markets','浏览开放市场')}</a></td></tr>`;
   renderScannerDiagnostics(data.scanner_diagnostics);
   filterOpportunities();
 }
@@ -111,7 +112,7 @@ async function recordTrade(button) {
 function renderPaperFeedback() {
   const output=$('#paper-feedback');if(!output)return;
   if(savedPaperId==null){output.classList.add('hidden');return;}
-  output.innerHTML=`<span>${t(`Paper record #${savedPaperId} saved. No orders were submitted.`,`已保存观察记录 #${savedPaperId}，没有提交订单。`)}</span> <a href="/paper-trades">${t('View paper records','查看观察记录')}</a>`;output.classList.remove('hidden');
+  output.innerHTML=`<span>${t(`Paper record #${savedPaperId} saved. No orders were submitted.`,`已保存观察记录 #${savedPaperId}，没有提交订单。`)}</span> <a href="${localUrl('/paper-trades')}">${t('View paper records','查看观察记录')}</a>`;output.classList.remove('hidden');
 }
 function renderMarketDetail(m) {
   const disclosureState=captureDisclosures('#market-summary'), calculationDisclosures=captureDisclosures('#calculation');
@@ -183,12 +184,12 @@ function recordPagination(items, languageOnly=false) {
 }
 function renderPaperTrades(data, languageOnly=false) {
   const items=recordPagination(data.items,languageOnly);
-  $('#paper-table').innerHTML=items.length?items.map(x=>`<tr><td>${dateText(x.created_at)}</td><td>${marketText(x.market_question)}${snapshotActions('paper',x.id,x.market_id)}</td><td>${num(x.target_quantity)}</td><td>${num(x.executable_quantity)}</td><td>${num(x.total_cost,6)}</td><td>${num(x.net_profit,6)}</td><td>${esc(message(x.status))}</td><td>${esc(message(x.trigger_type))}</td></tr>`).join(''):`<tr><td colspan="8" class="empty"><strong>${t('No paper observations saved','尚未保存模拟观察记录')}</strong><p>${t('Inspect an eligible scanner candidate, then save its cost estimate and source books for review.','核验符合条件的扫描候选后，可保存成本估算及来源盘口以供回看。')}</p><a href="/opportunities">${t('Open book scanner','打开盘口扫描')}</a></td></tr>`;
+  $('#paper-table').innerHTML=items.length?items.map(x=>`<tr><td>${dateText(x.created_at)}</td><td>${marketText(x.market_question)}${snapshotActions('paper',x.id,x.market_id)}</td><td>${num(x.target_quantity)}</td><td>${num(x.executable_quantity)}</td><td>${num(x.total_cost,6)}</td><td>${num(x.net_profit,6)}</td><td>${esc(message(x.status))}</td><td>${esc(message(x.trigger_type))}</td></tr>`).join(''):`<tr><td colspan="8" class="empty"><strong>${t('No paper observations saved','尚未保存模拟观察记录')}</strong><p>${t('Inspect an eligible scanner candidate, then save its cost estimate and source books for review.','核验符合条件的扫描候选后，可保存成本估算及来源盘口以供回看。')}</p><a href="${localUrl('/opportunities')}">${t('Open book scanner','打开盘口扫描')}</a></td></tr>`;
 }
 async function paperTrades() { const data=await api(`/api/paper-trades?limit=${records.limit+1}&offset=${records.offset}`);pageData['paper-trades']=data;renderPaperTrades(data); }
 function renderHistory(data, languageOnly=false) {
   const items=recordPagination(data.items,languageOnly);
-  $('#history-table').innerHTML=items.length?items.map(x=>`<tr><td>${marketText(x.question)}${snapshotActions('history',x.id,x.market_id)}</td><td>${dateText(x.first_seen)}</td><td>${dateText(x.last_seen)}</td><td>${num(x.max_net_profit,6)}</td><td>${pct(x.max_net_roi)}</td><td>${num(x.max_quantity)}</td><td>${esc(message(x.status))}${x.disappeared_reason?`<small class="muted">${esc(message(x.disappeared_reason))}</small>`:''}</td></tr>`).join(''):`<tr><td colspan="7" class="empty"><strong>${t('No eligible signals recorded yet','尚无符合条件的历史信号')}</strong><p>${t('The scanner saves passing snapshots automatically. Review the current sample and exclusion reasons to understand coverage.','扫描器自动保存通过条件的快照。可查看当前样本与排除原因，了解覆盖范围。')}</p><a href="/opportunities">${t('Review scanner coverage','查看扫描范围')}</a></td></tr>`;
+  $('#history-table').innerHTML=items.length?items.map(x=>`<tr><td>${marketText(x.question)}${snapshotActions('history',x.id,x.market_id)}</td><td>${dateText(x.first_seen)}</td><td>${dateText(x.last_seen)}</td><td>${num(x.max_net_profit,6)}</td><td>${pct(x.max_net_roi)}</td><td>${num(x.max_quantity)}</td><td>${esc(message(x.status))}${x.disappeared_reason?`<small class="muted">${esc(message(x.disappeared_reason))}</small>`:''}</td></tr>`).join(''):`<tr><td colspan="7" class="empty"><strong>${t('No eligible signals recorded yet','尚无符合条件的历史信号')}</strong><p>${t('The scanner saves passing snapshots automatically. Review the current sample and exclusion reasons to understand coverage.','扫描器自动保存通过条件的快照。可查看当前样本与排除原因，了解覆盖范围。')}</p><a href="${localUrl('/opportunities')}">${t('Review scanner coverage','查看扫描范围')}</a></td></tr>`;
 }
 async function history() { const data=await api(`/api/opportunities/history?limit=${records.limit+1}&offset=${records.offset}`);pageData.history=data;renderHistory(data); }
 function renderSettingsResult() {

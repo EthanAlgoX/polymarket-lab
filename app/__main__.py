@@ -7,7 +7,7 @@ from app.config import get_settings
 
 def main() -> None:
     settings = get_settings()
-    uvicorn.run("app.main:app", host=settings.host, port=settings.port)
+    uvicorn.run("app.main:app", host=settings.host, port=settings.port, root_path=settings.root_path)
 
 
 if __name__ == "__main__":
